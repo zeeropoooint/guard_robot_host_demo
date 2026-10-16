@@ -1,0 +1,20 @@
+[project]
+name = "guard_robot_host_demo"
+version = "0.1.0"
+description = "2026年广东省创意机器人大赛编程组代码示例"
+requires-python = ">=3.11, <3.13"
+dependencies = [
+    "opencv-python>=4.8.0",
+    "pupil-apriltags>=1.0.4",
+    "pyserial>=3.5",
+]
+
+[tool.uv]
+# 本项目是可直接运行的应用（python track_fire.py），而非可分发的包，
+# 因此不构建/安装自身，仅由 uv 管理依赖与虚拟环境。
+package = false
+
+# 优先使用阿里云 PyPI 镜像
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true

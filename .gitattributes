@@ -1,0 +1,8 @@
+# 统一换行符处理，避免 Windows 下 CRLF/LF 打架
+* text=auto
+
+# 常见文本文件强制 LF
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.ino text eol=lf

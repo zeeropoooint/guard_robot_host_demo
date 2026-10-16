@@ -1,0 +1,6 @@
+# Python 字节码
+__pycache__/
+*.py[cod]
+
+# uv 虚拟环境（由 uv sync 自动创建，勿提交）
+.venv/

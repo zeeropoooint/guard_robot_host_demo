@@ -1,3 +1,103 @@
+# 首次上手：把项目拿到本地（GitHub 操作指引）
+
+> 写给还没用过 GitHub 的队友。跟着下面一步步做，就能把代码下载到电脑并跑起来。
+> 好消息：仓库是公开的，**不需要注册 GitHub 账号**也能克隆。
+
+## 0. 你需要准备的
+
+- 一台 Windows 或 macOS 电脑（下面按系统分开说明）
+- 一个浏览器（用来打开仓库页面）
+- 大约 10 分钟
+
+## 1. 安装 Git（只需装一次）
+
+Git 是用来「把代码从网上拉下来」的工具。
+
+**Windows 队友：**
+
+1. 打开 https://git-scm.com/downloads ，点击 Windows 的下载按钮
+2. 运行安装包，一路点「Next / 下一步」用默认选项即可，最后「Finish」完成
+3. 在开始菜单搜索并打开 **PowerShell**，输入 `git --version` 回车验证
+
+**macOS 队友：**
+
+1. 打开「终端 Terminal」（在「启动台 → 其他 → 终端」里）
+2. 输入下面命令并回车，系统如果提示安装「命令行开发者工具」，点「安装」即可：
+
+```bash
+git --version
+```
+
+> macOS 一般自带或自动装好 git，只要能看到 `git version 2.xx.x` 就说明装好了。
+
+## 2. 打开仓库并复制地址
+
+1. 浏览器打开仓库主页：https://github.com/zeeropoooint/guard_robot_host_demo
+2. 点击页面右上方绿色的 **Code** 按钮
+3. 在弹出的框里确认标签是 **HTTPS**，点右边的复制图标（复制得到 `https://github.com/zeeropoooint/guard_robot_host_demo.git`）
+
+## 3. 克隆到本地
+
+「克隆」就是把仓库复制到你自己的电脑上。
+
+1. 打开终端（Windows 用 **PowerShell**，macOS 用 **终端 Terminal**）
+2. 先进入你想放项目的文件夹：
+
+   - Windows 想放到 D 盘根目录：
+
+     ```powershell
+     cd D:\
+     ```
+
+   - macOS 想放到「文稿」目录：
+
+     ```bash
+     cd ~/Documents
+     ```
+
+3. 粘贴刚才复制的地址执行：
+
+```powershell
+git clone https://github.com/zeeropoooint/guard_robot_host_demo.git
+```
+
+看到进度条走完，目录里就会多出一个 `guard_robot_host_demo` 文件夹，代码就在里面。
+
+## 4. 进入项目并跑起来
+
+```powershell
+cd guard_robot_host_demo
+```
+
+接着就是「装环境 → 改配置 → 运行」三步，请看下方 **「环境配置」** 和 **「配置说明」** 两个章节，照着做即可。
+
+## 给 macOS 队友的重要提示
+
+这套代码的**摄像头和串口目前是 Windows 专门写的**（摄像头用了 DirectShow、串口写死了 `COM6`），所以在 macOS 上：
+
+- **能正常做**：克隆、看代码、改代码、`uv sync` 装依赖
+- **暂时不能直接跑**：摄像头打不开（DirectShow）、连不上机器人（没有 `COM6`）
+
+所以 macOS 队友先以「看代码、改代码」为主即可；实际连机器人跑流程的那台电脑建议还是用 Windows。若以后需要让 Mac 也能跑，得先把代码改成跨平台（摄像头自动选后端 + 串口按系统选设备名），可以找队友一起处理。
+
+另外，下方「环境配置」章节里安装 uv 的步骤是按 Windows 写的；macOS 装 uv 更简单，打开终端执行：
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+（或已装 Homebrew 的话直接 `brew install uv`）。装完执行 `uv --version` 能看到版本号即可，之后的 `uv sync` 用法和 Windows 完全一样。
+
+## 附：不想装 Git？直接下载压缩包
+
+1. 打开仓库页，点绿色 **Code** 按钮，选 **Download ZIP**
+2. 下载后解压，解压出来的文件夹就是项目
+3. 打开 PowerShell 进到解压后的目录，直接跳到下方 **「环境配置」** 章节继续
+
+> 小提示：ZIP 方式拿不到以后的更新；正式协作更推荐用上面的 `git clone`。以后队友更新了代码，你只需在项目目录里执行 `git pull` 就能同步。
+
+---
+
 # 环境配置
 
 > 系统：Windows

@@ -7,9 +7,11 @@
  * 串口命令：
  *   @S<角度>              舵机在 200 ms 内移动到目标角度，范围 0～180
  *   @MA<速度>             设置 A 电机，范围 -255～255，0 表示停止
- *   @MB<速度>             设置 B 电机，范围 -255～255，0 表示停止
+ *   @MB<速度>             设置 B 电机，范围 -255～255，0 表示停止。
+ *                         非零速度时启动通信看门狗，500 ms 内未再收到
+ *                         @MB 命令会自动停机，因此上位机需定时重发当前速度
  *   @MTA<速度>,<毫秒>     A 电机定时运行，到时后自动停止
- *   @MTB<速度>,<毫秒>     B 电机定时运行，到时后自动停止
+ *   @MTB<速度>,<毫秒>     B 电机定时运行，到时后自动停止（不受看门狗限制）
  *   @FS                   执行一次发射动作
  *   @ZZ                   执行一次装填动作
  *   @JGON                 打开激光发射器
@@ -72,14 +74,19 @@ const unsigned long SERVO_UPDATE_INTERVAL_MS = 20;
 // 发射或装填开始后先运行固定时间，使机构完全离开当前传感器检测位置。
 const unsigned long LEAVE_SENSOR_DELAY_MS = 500;
 
-// 发射/装填等待位置传感器的超时时间：超时说明机构空转（无弹）或传感器
-// 未触发，停止电机并放弃本次动作，避免卡死串口命令处理导致整体无响应。
-const unsigned long SENSOR_WAIT_TIMEOUT_MS = 4000;
+// 发射/装填时 A 电机的转速（0～255）。全速 255 时惯性大，盲转期间可能越过
+// 下一个检测点导致一次抛出多发；降低到能可靠带动机构即可（如 160～200）。
+const int FIRE_MOTOR_SPEED = 180;
 
 // B 电机锁定时，蜂鸣器鸣响 200 ms、静音 800 ms，循环提示锁定状态。
 const unsigned int BUZZER_FREQUENCY_HZ = 2000;
 const unsigned long BUZZER_ON_DURATION_MS = 200;
 const unsigned long BUZZER_OFF_DURATION_MS = 800;
+
+// B 电机通信看门狗：连续 @MB 命令驱动电机转动时，若超过该时间没有再收到
+// @MB 命令（上位机崩溃、被杀进程、USB 断开等），自动停止 B 电机。
+// 上位机在跟踪时会每 200 ms 重发一次当前速度作为心跳。
+const unsigned long MOTOR_B_COMMAND_TIMEOUT_MS = 500;
 
 
 // ============================== 运行状态 ==============================
@@ -110,6 +117,11 @@ bool motorBLocked = false;
 bool motorBTimedRunActive = false;
 unsigned long motorBStopTime = 0;
 
+// B 电机连续命令（@MB）的看门狗状态：armed 为 true 表示电机正由连续
+// 命令驱动，需要在超时时间内持续收到 @MB 心跳，否则自动停止。
+bool motorBWatchdogArmed = false;
+unsigned long lastMotorBCommandTime = 0;
+
 bool buzzerIsOn = false;
 unsigned long buzzerLastChangeTime = 0;
 
@@ -132,7 +144,6 @@ bool parseTimedMotorCommand(const String &parameters, int &speedValue,
                             unsigned long &durationMs);
 void fireOnce();
 void loadOnce();
-bool waitForPositionSensor(unsigned long timeoutMs);
 
 
 // ============================== Arduino 主流程 ==============================
@@ -236,6 +247,8 @@ void processSerialCommand(const String &command) {
     unsigned long durationMs;
     if (!motorBLocked &&
         parseTimedMotorCommand(command.substring(4), speedValue, durationMs)) {
+      // 定时命令自带到时停止，不受连续命令看门狗监管
+      motorBWatchdogArmed = false;
       runMotorBTimed(speedValue, durationMs);
     }
   }
@@ -248,6 +261,9 @@ void processSerialCommand(const String &command) {
       int motorValueB = constrain(command.substring(3).toInt(), -255, 255);
       motorBTimedRunActive = false;
       setMotorB(motorValueB);
+      // 刷新看门狗心跳：非零速度开始监护，速度为 0 时解除监护
+      lastMotorBCommandTime = millis();
+      motorBWatchdogArmed = (motorValueB != 0);
     }
   }
   else if (command.startsWith("@S")) {
@@ -361,6 +377,7 @@ void toggleMotorBLock() {
   motorBLocked = !motorBLocked;
   if (motorBLocked) {
     motorBTimedRunActive = false;
+    motorBWatchdogArmed = false;
     setMotorB(0);
 
     // 进入锁定状态时立即鸣响一次，再按设定的开/关时间循环。
@@ -412,11 +429,19 @@ void delayWithMotorBControl(unsigned long durationMs) {
 }
 
 
-// 检查非阻塞的 B 电机定时命令是否到时。
+// 检查非阻塞的 B 电机定时命令是否到时，以及连续命令的通信看门狗是否超时。
 void updateMotorBTimedRun() {
   if (motorBTimedRunActive &&
       (long)(millis() - motorBStopTime) >= 0) {
     motorBTimedRunActive = false;
+    setMotorB(0);
+  }
+
+  // 通信看门狗：连续命令驱动期间超时未收到心跳，立即停止 B 电机
+  if (motorBWatchdogArmed &&
+      (long)(millis() - lastMotorBCommandTime) >=
+          (long)MOTOR_B_COMMAND_TIMEOUT_MS) {
+    motorBWatchdogArmed = false;
     setMotorB(0);
   }
 }
@@ -515,33 +540,18 @@ void runMotorBTimed(int speedValue, unsigned long durationMs) {
 // ============================== 发射与装填 ==============================
 
 /*
- * 等待位置传感器触发，最多 timeoutMs 毫秒。
- * 等待期间继续控制 B 电机（云台）。
- * 返回 true 表示传感器已触发；false 表示超时（机构空转或传感器未触发）。
+ * 执行一次发射动作。
+ * 先让 A 电机沿发射方向运行 500 ms，确保机构离开当前检测点；
+ * 随后等待位置传感器变为 HIGH，到达下一个机械位置后立即停止。
  */
-bool waitForPositionSensor(unsigned long timeoutMs) {
-  unsigned long startTime = millis();
-
-  while (digitalRead(POSITION_SENSOR_PIN) == LOW) {
-    serviceMotorBControl();
-    if (millis() - startTime >= timeoutMs) {
-      return false;   // 超时：放弃等待，让主循环继续处理串口命令
-    }
-  }
-
-  return true;
-}
-
-
 void fireOnce() {
   digitalWrite(MOTOR_LEVEL_PIN_A, LOW);
-  analogWrite(MOTOR_PWM_PIN_A, 255);
+  analogWrite(MOTOR_PWM_PIN_A, FIRE_MOTOR_SPEED);
   delayWithMotorBControl(LEAVE_SENSOR_DELAY_MS);
 
-  // 超时说明无弹或传感器未触发：停止电机并放弃，避免卡死串口命令处理。
-  if (!waitForPositionSensor(SENSOR_WAIT_TIMEOUT_MS)) {
-    setMotorA(0);
-    return;
+  while (digitalRead(POSITION_SENSOR_PIN) == LOW) {
+    // 等待发射机构到达下一个位置传感器检测点。
+    serviceMotorBControl();
   }
 
   setMotorA(0);
@@ -557,9 +567,9 @@ void loadOnce() {
   analogWrite(MOTOR_PWM_PIN_A, 0);
   delayWithMotorBControl(LEAVE_SENSOR_DELAY_MS);
 
-  if (!waitForPositionSensor(SENSOR_WAIT_TIMEOUT_MS)) {
-    setMotorA(0);
-    return;
+  while (digitalRead(POSITION_SENSOR_PIN) == LOW) {
+    // 等待装填机构到达下一个位置传感器检测点。
+    serviceMotorBControl();
   }
 
   setMotorA(0);

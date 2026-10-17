@@ -1,50 +1,45 @@
-"""PD 稳定跟踪：用云台（电机 B）跟踪 AprilTag
+"""PID 比例控制：用云台（电机 B）跟踪 AprilTag
 
 策略：
     没发现标签 → 云台停止
-    发现标签   → 云台转动（PD 控制：偏差越大转得越快，越接近中心刹车越早）
+    发现标签   → 云台转动（比例控制：偏差越大转速越大）
     标签居中   → 云台停止
 
-相比纯 P 控制多了两项稳定措施：
-    低通滤波 —— 滤掉检测坐标的帧间抖动，速度不再忽大忽小
-    D 微分项 —— 接近中心时提前减速，减少过冲和来回摆动
-
-操作：在摄像头窗口按 Q 或 Esc 退出。
+操作：在摄像头窗口按 Q 或 Esc 退出，直接关闭画面窗口也可以（会自动停云台）。
 """
+
+import time
 
 from board import board
 from vision import vision
-from control import control
-from config import SERIAL_PORT, VOLTAGE_POLARITY
+from config import SERIAL_PORT, VOLTAGE_POLARITY, resolve_serial_port
 
-CENTER_HALF_WIDTH = 15  # 标签离画面中心多少像素以内算"居中"
-KP = 3.0                # P 比例系数：偏差每 1 像素对应的转速（越大越灵敏）
-KD = 0.5                # D 微分系数：偏差每秒收敛 1 像素对应的刹车力（设为 0 退回纯 P 控制）
-ALPHA = 0.4             # 低通滤波系数 0～1（越小越平滑、响应越迟钝）
-MAX_SPEED = 255         # 云台最大速度（转速上限）
-MIN_SPEED = 150         # 云台最小速度（太低电机带不动，太高会过冲，取能爬行的最低值）
-D_LIMIT = 150           # 刹车力上限：接近中心时最多减速多少，防止刹车过猛或不刹车
-
-# 稳定控制器在 control/control.py 中实现，track_fire.py 与本文件共用
-stabilizer = control.Stabilizer(
-    kp=KP,
-    kd=KD,
-    alpha=ALPHA,
-    max_speed=MAX_SPEED,
-    min_speed=MIN_SPEED,
-    deadzone=CENTER_HALF_WIDTH,
-    d_limit=D_LIMIT,
-)
-
+CENTER_HALF_WIDTH = 15 # 标签离画面中心多少像素以内算"居中"
+MAX_SPEED = 255        # 云台最大速度（转速上限）
+MIN_SPEED = 150        # 云台最小速度（太低电机带不动，太高会过冲，取能爬行的最低值）
+KP = 3                 # PID 比例系数：偏差每 1 像素对应的转速
+HEARTBEAT_INTERVAL = 0.2  # 速度心跳间隔（秒），配合控制板看门狗
 
 def motor_speed(error):
-    """根据偏差算出云台速度（低通滤波 + PD 控制）。
+    """根据偏差算出云台速度（比例控制：偏差越大，转得越快）。
 
-    输入：error 偏差（偏右为正，偏左为负，越远数字越大）
-    输出：速度；偏差在居中范围内时返回 0。
+    偏差：偏右为正，偏左为负，越远数字越大。
+    举例：偏差 30 像素 × 比例系数 3 = 速度 90
     """
+    # 在偏差范围内，speed 设置为 0
+    if abs(error) < CENTER_HALF_WIDTH:
+        return 0
 
-    return stabilizer.update(error) * VOLTAGE_POLARITY
+    # 按比例算速度，负号让云台朝标签方向转
+    speed = int(-error * KP)
+
+    # 限幅：太快会转过头，太慢电机带不动
+    if speed >= 0:
+        direction = 1
+    else:
+        direction = -1
+    magnitude = max(MIN_SPEED, min(MAX_SPEED, abs(speed)))
+    return direction * magnitude * VOLTAGE_POLARITY
 
 
 def main():
@@ -52,10 +47,11 @@ def main():
     camera = vision.open_camera() # 打开摄像头
 
     try:
-        board.connect(SERIAL_PORT) # 连接控制板
+        board.connect(resolve_serial_port(SERIAL_PORT)) # 连接控制板
         board.set_servo_angle(90)  # 云台初始角度
         board.stop_motor_b()   # 一开始云台不动
-        last_speed = 0         # 上一次发送的速度（0 表示停止）
+        last_speed = None      # 上一次发送的速度；None 表示尚未发送过
+        last_send_time = 0.0
         print("云台已就绪：发现标签才开始转动。")
 
         while True:
@@ -69,7 +65,7 @@ def main():
             if tags:
                 # 偏差 = 测量值（标签位置）− 期望值（画面中心 0）
                 error = int(tags[0].center[0] - center_x)
-                speed = motor_speed(error)   # PD 稳定控制
+                speed = motor_speed(error)   # PID 比例控制
                 status=f"偏差：{error}"
             else:
                 speed = 0                   # 没发现标签，云台停止
@@ -77,16 +73,21 @@ def main():
 
             status=f"{status} |  云台速度：{speed}"
 
-            # 只在速度变化时才发送命令
-            if speed != last_speed:
+            # 速度变化立即发送，不变时按心跳间隔静默重发
+            now = time.monotonic()
+            speed_changed = speed != last_speed
+            if speed_changed or now - last_send_time >= HEARTBEAT_INTERVAL:
                 board.set_motor_b(speed)
                 last_speed = speed
-                status= f"{status} |=> 发送指令"
-                print(status)
+                last_send_time = now
+                if speed_changed:
+                    status= f"{status} |=> 发送指令"
+                    print(status)
 
             vision.show_frame(frame, tags, status)
-            if vision.is_quit_key(vision.wait_key()):
-                print("按 Q 或 Esc 退出。")
+            if vision.is_quit_key(vision.wait_key()) or vision.is_window_closed():
+                print("退出跟踪，云台停止。")
+                board.set_motor_b(0)
                 break
     finally:
         # 收尾：不管正常退出还是出错，都会执行

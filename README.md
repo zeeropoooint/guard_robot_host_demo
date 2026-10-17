@@ -1,101 +1,11 @@
-# GitHub 操作指引
-
-
-## 1. 安装 Git（只需装一次）
-
-Git 是用来「把代码从网上拉下来」的工具。
-
-**Windows**
-
-1. 打开 https://git-scm.com/downloads ，点击 Windows 的下载按钮
-2. 运行安装包，一路点「Next / 下一步」用默认选项即可，最后「Finish」完成
-3. 在开始菜单搜索并打开 **PowerShell**，输入 `git --version` 回车验证
-
-**macOS**
-
-1. 打开「终端 Terminal」（在「启动台 → 其他 → 终端」里）
-2. 输入下面命令并回车，系统如果提示安装「命令行开发者工具」，点「安装」即可：
-
-```bash
-git --version
-```
-
-> macOS 一般自带或自动装好 git，只要能看到 `git version 2.xx.x` 就说明装好了。
-
-## 2. 打开仓库并复制地址
-
-1. 浏览器打开仓库主页：https://github.com/zeeropoooint/guard_robot_host_demo
-2. 点击页面右上方绿色的 **Code** 按钮
-3. 在弹出的框里确认标签是 **HTTPS**，点右边的复制图标（复制得到 `https://github.com/zeeropoooint/guard_robot_host_demo.git`）
-
-## 3. 克隆到本地
-
-「克隆」就是把仓库复制到你自己的电脑上。
-
-1. 打开终端（Windows 用 **PowerShell**，macOS 用 **终端 Terminal**）
-2. 先进入你想放项目的文件夹：
-
-   - Windows 想放到 D 盘根目录：
-
-     ```powershell
-     cd D:\
-     ```
-
-   - macOS 想放到「文稿」目录：
-
-     ```bash
-     cd ~/Documents
-     ```
-
-3. 粘贴刚才复制的地址执行：
-
-```powershell
-git clone https://github.com/zeeropoooint/guard_robot_host_demo.git
-```
-
-看到进度条走完，目录里就会多出一个 `guard_robot_host_demo` 文件夹，代码就在里面。
-
-## 4. 进入项目并跑起来
-
-```powershell
-cd guard_robot_host_demo
-```
-
-接着就是「装环境 → 改配置 → 运行」三步，请看下方 **「环境配置」** 和 **「配置说明」** 两个章节，照着做即可。
-
-## 给 macOS 队友的重要提示
-
-这套代码的**摄像头和串口目前是 Windows 专门写的**（摄像头用了 DirectShow、串口写死了 `COM6`），所以在 macOS 上：
-
-- **能正常做**：克隆、看代码、改代码、`uv sync` 装依赖
-- **暂时不能直接跑**：摄像头打不开（DirectShow）、连不上机器人（没有 `COM6`）
-
-所以 macOS 队友先以「看代码、改代码」为主即可；实际连机器人跑流程的那台电脑建议还是用 Windows。若以后需要让 Mac 也能跑，得先把代码改成跨平台（摄像头自动选后端 + 串口按系统选设备名），可以找队友一起处理。
-
-另外，下方「环境配置」章节里安装 uv 的步骤是按 Windows 写的；macOS 装 uv 更简单，打开终端执行：
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-（或已装 Homebrew 的话直接 `brew install uv`）。装完执行 `uv --version` 能看到版本号即可，之后的 `uv sync` 用法和 Windows 完全一样。
-
-## 附：不想装 Git？直接下载压缩包
-
-1. 打开仓库页，点绿色 **Code** 按钮，选 **Download ZIP**
-2. 下载后解压，解压出来的文件夹就是项目
-3. 打开 PowerShell 进到解压后的目录，直接跳到下方 **「环境配置」** 章节继续
-
-> 小提示：ZIP 方式拿不到以后的更新；正式协作更推荐用上面的 `git clone`。以后队友更新了代码，你只需在项目目录里执行 `git pull` 就能同步。
-
----
-
 # 环境配置
 
-> 系统：Windows
+> 系统：Windows 或 macOS（Linux 同样适用）
 > Python 版本：3.11（由 uv 自动下载，无需预装 Python）
 
 ## 1. 安装 uv
+
+**Windows**：
 
 从 [uv releases](https://github.com/astral-sh/uv/releases) 下载 `uv-x86_64-pc-windows-msvc.zip`，解压后将 `uv.exe` 放到 `d:\software\uv` 目录
 将 `d:\software\uv` 添加到环境变量 Path 中
@@ -107,6 +17,16 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 4. 在 **系统变量** 中，找到 **Path** 变量，点击 **编辑**。
 5. 点击 **新建**，输入 `d:\software\uv`。
 6. 点击 **确定** 关闭所有弹窗。
+
+**macOS**：
+
+推荐使用 Homebrew 安装（也可从 [uv releases](https://github.com/astral-sh/uv/releases) 下载 `uv-aarch64-apple-darwin.tar.gz`（Apple 芯片）或 `uv-x86_64-apple-darwin.tar.gz`（Intel 芯片）解压后放入 PATH）：
+
+```bash
+brew install uv
+```
+
+> 提示：macOS 首次运行打开摄像头的程序时，系统会弹出“是否允许终端访问摄像头”，请选择允许；也可稍后在 **系统设置 → 隐私与安全性 → 摄像头** 中手动开启。若使用 CH340 芯片的 USB 转串口模块，需安装 CH340 的 macOS 驱动。
 
 ## 2. 同步依赖
 
@@ -133,29 +53,41 @@ uv 会自动下载 Python 3.11、创建 `.venv` 虚拟环境，并安装 `pyproj
 **文件**：`config.py`
 
 ```python
-SERIAL_PORT = "COM12"   # 控制板串口号
+# Windows 下写端口号；macOS/Linux 下默认为 None，表示自动搜索 USB 串口
+SERIAL_PORT = "COM12"   # Windows：控制板串口号；macOS 例如 "/dev/cu.usbmodem1101"
 VOLTAGE_POLARITY = -1   # 云台转向与画面修正方向相反时设为 -1
-CAMERA_INDEX = 0        # 摄像头索引（Windows DirectShow 枚举顺序）
+CAMERA_INDEX = 0        # 摄像头索引
 ```
+
+> 程序会按系统自动选择摄像头后端：Windows 用 DirectShow、macOS 用 AVFoundation、Linux 用 V4L2，无需手动配置。
 
 ## 1. 串口编号设置（SERIAL\_PORT）
 
 **查看可用串口**：
 
-- 方法 A：设备管理器 → **端口 (COM 和 LPT)** → 查看单片机对应的端口号
-- 方法 B：在终端执行 `mode` 命令列出所有 COM 端口
-- 方法 C：用 Python 列出（需已安装 pyserial）：
-  ```powershell
+- Windows：
+  - 方法 A：设备管理器 → **端口 (COM 和 LPT)** → 查看单片机对应的端口号
+  - 方法 B：在终端执行 `mode` 命令列出所有 COM 端口
+- macOS：插上控制板后在终端执行 `ls /dev/cu.*`，Arduino UNO 通常显示为 `/dev/cu.usbmodem*`，CH340 转接板通常显示为 `/dev/cu.usbserial-*` 或 `/dev/cu.wchusbserial*`
+- 任意系统通用：用 Python 列出（需已安装 pyserial）：
+  ```bash
   uv run python -c "import serial.tools.list_ports; [print(p.device) for p in serial.tools.list_ports.comports()]"
   ```
 
-将 `COM12` 改为你查到的实际端口号，例如：
+**Windows**：将 `COM12` 改为你查到的实际端口号，例如：
 
 ```python
 SERIAL_PORT = "COM13"
 ```
 
-> 若运行时报 `PermissionError(13, '拒绝访问。')`，通常是端口号错误、被其他程序占用，或 USB 转串口驱动未正确安装。
+**macOS/Linux**：保持 `SERIAL_PORT = None` 即可，程序会自动搜索第一个 USB 串口；
+若自动搜索到的端口不对（例如电脑上接了多个串口设备），再手动指定：
+
+```python
+SERIAL_PORT = "/dev/cu.usbmodem1101"
+```
+
+> 若运行时报 `PermissionError(13, '拒绝访问。')`（Windows）或端口打不开，通常是端口号错误、被其他程序占用，或 USB 转串口驱动未正确安装。
 
 ## 2. 摄像头编号设置（CAMERA\_INDEX）
 
@@ -165,7 +97,7 @@ SERIAL_PORT = "COM13"
 - `1` → 第二个摄像头（通常是外接 USB 摄像头）
 - `2、3...` → 更多摄像头，按接入顺序递增
 
-**如何确定编号**：依次尝试 `0`、`1`、`2` 直到画面正常出现。如果运行时报 `无法通过 DirectShow 打开摄像头`，说明编号不匹配或摄像头被占用。
+**如何确定编号**：依次尝试 `0`、`1`、`2` 直到画面正常出现。如果运行时报 `无法通过 ... 打开摄像头`（Windows 提示 DirectShow、macOS 提示 AVFoundation），说明编号不匹配或摄像头被占用；macOS 还需确认已允许终端访问摄像头。
 
 ## 3. 电压极性设置（VOLTAGE\_POLARITY）
 
@@ -180,7 +112,7 @@ SERIAL_PORT = "COM13"
 
 打开终端，执行：
 
-```powershell
+```bash
 cd <项目根目录>
 uv run track_fire.py
 ```
@@ -239,7 +171,7 @@ uv run track_fire.py
 
 ## 1. 测试摄像头
 
-```powershell
+```bash
 uv run test_camera.py
 ```
 
@@ -247,7 +179,7 @@ uv run test_camera.py
 
 ## 2. 测试 AprilTag 检测
 
-```powershell
+```bash
 uv run test_detector.py
 ```
 
@@ -255,14 +187,17 @@ uv run test_detector.py
 
 ## 3. 测试控制板
 
-```powershell
+```bash
 uv run test_board.py
 ```
 
 也可以把串口作为第一个参数传入：
 
-```powershell
+```bash
+# Windows
 uv run test_board.py COM3
+# macOS
+uv run test_board.py /dev/cu.usbmodem1101
 ```
 
 控制板示例按键：
@@ -281,72 +216,50 @@ uv run test_board.py COM3
 
 ## 4. 云台跟踪（track.py）
 
-```powershell
+```bash
 uv run track.py
 ```
 
 开关式跟踪：发现 AprilTag 后，云台按**固定速度**转动——标签偏右就右转、偏左就左转，标签进入画面中心范围（`CENTER_HALF_WIDTH`）就停止；没发现标签则云台停住。转速固定，不随偏差变化，逻辑最简单，适合先理解"让云台自己追标签"的基本思路。
 
-## 5. PD 稳定跟踪（track\_pid.py）
+## 5. PID 比例跟踪（track\_pid.py）
 
-```powershell
+```bash
 uv run track_pid.py
 ```
 
-PD 稳定控制：同样是发现标签后云台跟踪，转速与偏差成正比——**偏差越大转得越快，越靠近中心刹车越早**，并配合低通滤波滤除检测坐标的帧间抖动。比纯 P 控制更平滑，不易过冲和在中心附近来回摆动。可调参数都在文件顶部：
+PID 比例控制（P 控制）：同样是发现标签后云台跟踪，但转速与偏差成正比——**偏差越大转得越快，越靠近中心转得越慢**，对准后停止。比开关式更平滑，不易在中心附近来回摆动。可调参数都在文件顶部：
 
 - `KP`：比例系数（偏差每 1 像素对应的转速，越大越灵敏）
-- `KD`：微分系数（偏差每秒收敛 1 像素对应的刹车力，设为 0 退回纯 P 控制）
-- `ALPHA`：低通滤波系数（0～1，越小输出越平滑、响应越迟钝）
 - `MAX_SPEED` / `MIN_SPEED`：速度限幅（太快会转过头，太慢电机带不动）
-- `D_LIMIT`：刹车力上限（防止刹车过猛或不刹车）
 - `CENTER_HALF_WIDTH`：居中范围（标签进入该范围即停止）
 
-> 说明：稳定控制逻辑在 `control/control.py` 中实现，`track_pid.py` 与 `track_fire.py` 共用，D 项只刹车不反向——刹车力超过驱动力时云台直接停车滑行。
 > 注意：`track.py` / `track_pid.py` 都会操作真实硬件（云台电机 B），运行时请确认设备处于安全状态。两个程序都弹出摄像头窗口，按 **Q** 或 **Esc** 退出。
 
 ## 6. 多任务跟踪发射（track\_fire.py）
 
-```powershell
+```bash
 uv run track_fire.py
 ```
 
-按顺序执行 10 个任务（覆盖 1～10 号位全部目标）：程序先**对零**——搜索基准标签（①②③ 号位，见 `map.py`）并水平锁定，锁定方向即地图 0°；随后每个任务先把舵机转到该任务的武器俯仰角，再按 `map.py` 登记的相对角度**定时转向**目标大概方位，然后进入**水平闭环**——云台电机 PD 跟踪该标签直到到达期望位置（`offset` 指定的水平位置），最后执行动作（发射激光或发射一次），再进入下一个任务；全部完成后程序结束。注意：摄像头只随云台水平转动、俯仰固定，画面里的垂直位置不可控、仅作参考显示；俯仰舵机带动的是激光 / 发射机构，负责武器的高低瞄准。若转向后没看到目标，云台会继续旋转搜索；搜索途中一旦**看到任何已登记标签**会先把它对准画面中心（此刻当前朝向即其地图角度），再按相对角度差**快速转向**目标方位（"见标修正"），而不是原地慢扫；锁定时的朝向估计与地图记录差得够多时会自动**回写** `map.py`（地图越用越准）。
+按顺序执行多个任务：每个任务对应一个指定编号的 AprilTag。先把舵机（俯仰）转到任务指定角度，随后云台跟踪该标签直到到达期望位置（`offset` 指定的画面位置），最后执行动作（发射激光或发射一次），再进入下一个任务；全部完成后程序结束。
 
 任务在文件顶部的 `TASKS` 列表中配置，每条包含四个字段：
 
 - `tag`：要跟踪的标签编号
 - `offset`：标签期望位置，相对画面中心的像素偏移（右正左负，0 即画面中心）
-- `angle`：该标签的武器俯仰粗瞄准角度（0～180，跟踪过程中保持不变）
+- `angle`：跟踪该标签时舵机的俯仰角度（0～180）
 - `action`：标签到位后执行的动作，`"laser"` 发射激光，`"fire"` 发射一次
 
-默认任务列表覆盖 1～10 号位全部目标（动作以 `laser` 为主，4 号位为 `fire`）：
+默认按 tag 2 → 6 → 4 的顺序执行：
 
 ```python
 TASKS = [
-    {"tag": 1, "offset": -20, "angle": 94, "action": "laser"},
     {"tag": 2, "offset": -20, "angle": 102, "action": "laser"},
-    {"tag": 3, "offset": -20, "angle": 110, "action": "laser"},
-    {"tag": 4, "offset": -20, "angle": 100, "action": "fire"},
-    {"tag": 5, "offset": -20, "angle": 106, "action": "laser"},
     {"tag": 6, "offset": -24, "angle": 86, "action": "laser"},
-    {"tag": 7, "offset": -20, "angle": 88, "action": "laser"},
-    {"tag": 8, "offset": -20, "angle": 100, "action": "laser"},
-    {"tag": 9, "offset": -20, "angle": 112, "action": "laser"},
-    {"tag": 10, "offset": -20, "angle": 108, "action": "laser"},
+    {"tag": 4, "offset": -20, "angle": 100, "action": "fire"},
 ]
 ```
-
-> 提示：角度按装置照片估算（②=102、⑥=86、④=100 为实测锚点，规律是角度越大枪口越朝下）。某个目标打不准时，只微调该任务的 `angle`（每次 ±3° 逐步逼近）。
-
-地图导航的可调参数在文件顶部（角度表在 `map.py` 的 `TARGET_ANGLES`）：
-
-- `ALIGN_PITCH`：对零时的武器俯仰角度（①②③ 号位所在高度）
-- `DEGREES_PER_SECOND`：标定值——当前转速下云台每秒转过的度数（需实测修正）
-- `TURN_SIGN`：地图正方向对应的电机方向（若"地图让往 ④⑤⑥ 转、机器人却往 ⑨⑩ 转"，把 `1` 改成 `-1`）
-- `TURN_TOLERANCE`：转向角小于该度数就不转，直接交给视觉闭环
-- `MIN_RECORD_SPIN`：朝向估计偏离地图记录达到该度数才回写（过滤检测抖动）
-- `MAX_HEADING_FIXES`：单次搜索中最多"见标修正"次数（防止无限修正循环）
 
 > 注意：程序会操作真实硬件（云台电机 B、舵机、激光和发射机构），运行时请确认设备处于安全状态。程序弹出摄像头窗口，按 **Q** 或 **Esc** 退出（退出后未执行的任务将被跳过）。
 

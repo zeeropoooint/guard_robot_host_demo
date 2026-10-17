@@ -32,6 +32,7 @@ send_command(command: str)：发送自定义指令
 每个函数的输入/输出见函数注释。
 """
 
+import atexit
 import time
 import threading
 from typing import Any, Callable, Optional
@@ -50,6 +51,26 @@ _serial: Optional[Any] = None
 _port: Optional[str] = None
 _write_lock = threading.Lock()
 
+
+def _emergency_stop_on_exit() -> None:
+    """解释器退出时的紧急保护：若串口仍打开，直接写入停机指令。
+
+    覆盖未正常走 disconnect() 的退出路径（如未捕获异常导致的退出）；
+    直接写底层串口，避免退出过程中其他状态已被清理。
+    """
+
+    serial_obj = _serial
+    if serial_obj is None:
+        return
+    try:
+        serial_obj.write(b"@MB0\n@MA0\n")
+        serial_obj.flush()
+    except Exception:
+        pass  # 退出阶段忽略一切错误
+
+
+atexit.register(_emergency_stop_on_exit)
+
 # ============================ 连接和断开控制器 ============================
 
 def connect(
@@ -64,7 +85,10 @@ def connect(
     global _serial, _port
 
     if not isinstance(port, str) or not port.strip():
-        raise ValueError("port 必须是非空字符串，例如 'COM3'")
+        raise ValueError(
+            "port 必须是非空字符串，例如 'COM3'（Windows）"
+            "或 '/dev/cu.usbmodem1101'（macOS）"
+        )
     if baudrate <= 0:
         raise ValueError("baudrate 必须大于 0")
     if timeout < 0:

@@ -5,15 +5,18 @@
     发现标签   → 云台转动
     标签居中   → 云台停止
 
-操作：在摄像头窗口按 Q 或 Esc 退出。
+操作：在摄像头窗口按 Q 或 Esc 退出，直接关闭画面窗口也可以（会自动停云台）。
 """
+
+import time
 
 from board import board
 from vision import vision
-from config import SERIAL_PORT, VOLTAGE_POLARITY
+from config import SERIAL_PORT, VOLTAGE_POLARITY, resolve_serial_port
 
 MOTOR_SPEED = 200        # 云台转速度
 CENTER_HALF_WIDTH = 15   # 标签离画面中心多少像素以内算"居中"
+HEARTBEAT_INTERVAL = 0.2  # 速度心跳间隔（秒），配合控制板看门狗
 
 def motor_speed(error):
     """根据偏差算出云台速度。
@@ -34,10 +37,11 @@ def main():
     camera = vision.open_camera() # 打开摄像头
 
     try:
-        board.connect(SERIAL_PORT) # 连接控制板
+        board.connect(resolve_serial_port(SERIAL_PORT)) # 连接控制板
         board.set_servo_angle(90)  # 云台初始角度
         board.stop_motor_b()   # 一开始云台不动
-        last_speed = 0         # 上一次发送的速度（0 表示停止）
+        last_speed = None      # 上一次发送的速度；None 表示尚未发送过
+        last_send_time = 0.0
         print("云台已就绪：发现标签才开始转动。")
 
         while True:
@@ -59,16 +63,21 @@ def main():
 
             status=f"{status} |  云台速度：{speed}"
 
-            # 只在速度变化时才发送命令
-            if speed != last_speed:
+            # 速度变化立即发送，不变时按心跳间隔静默重发
+            now = time.monotonic()
+            speed_changed = speed != last_speed
+            if speed_changed or now - last_send_time >= HEARTBEAT_INTERVAL:
                 board.set_motor_b(speed)
                 last_speed = speed
-                status= f"{status} |=> 发送指令"
-                print(status)
+                last_send_time = now
+                if speed_changed:
+                    status= f"{status} |=> 发送指令"
+                    print(status)
 
             vision.show_frame(frame, tags, status)
-            if vision.is_quit_key(vision.wait_key()):
-                print("按 Q 或 Esc 退出。")
+            if vision.is_quit_key(vision.wait_key()) or vision.is_window_closed():
+                print("退出跟踪，云台停止。")
+                board.set_motor_b(0)
                 break
     finally:
         # 收尾：不管正常退出还是出错，都会执行

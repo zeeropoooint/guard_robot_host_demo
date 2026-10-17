@@ -1,13 +1,38 @@
 """控制板示例：按键测试电机、舵机、激光。"""
 
-import msvcrt
 import sys
 
 from board import board
-from config import SERIAL_PORT
+from config import SERIAL_PORT, resolve_serial_port
 
 MOTOR_SPEED = 200
 MOTOR_DURATION_MS = 500
+
+
+def read_key():
+    """读取一个按键（不需要回车、不回显），跨平台实现。
+
+    Windows 使用 msvcrt；macOS/Linux 使用 termios 进入 cbreak 模式
+    读取单个字符，读取后恢复终端原有设置。
+    输入：无
+    输出：按下的字符（str）
+    """
+
+    if sys.platform.startswith("win"):
+        import msvcrt
+
+        return msvcrt.getwch()
+
+    import termios
+    import tty
+
+    file_descriptor = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(file_descriptor)
+    try:
+        tty.setcbreak(file_descriptor)
+        return sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(file_descriptor, termios.TCSADRAIN, old_settings)
 
 def print_help():
     print(
@@ -26,7 +51,9 @@ def print_help():
     )
 
 def main():
-    port = sys.argv[1] if len(sys.argv) > 1 else SERIAL_PORT
+    # 命令行传入的串口优先；否则用 config.SERIAL_PORT（为 None 时自动搜索）
+    port_arg = sys.argv[1] if len(sys.argv) > 1 else SERIAL_PORT
+    port = resolve_serial_port(port_arg)
     board.connect(port)
     print_help()
 
@@ -36,7 +63,7 @@ def main():
         board.stop_all()
 
         while True:
-            key = msvcrt.getwch().lower()
+            key = read_key().lower()
 
             if key == "q":
                 print("退出控制板测试")

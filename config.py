@@ -14,12 +14,12 @@ import sys
 # Linux  ：写设备路径，例如 "/dev/ttyACM0"、"/dev/ttyUSB0"
 # 设为 None 时，程序会自动搜索第一个可用的 USB 串口（推荐 Mac/Linux 使用）。
 if sys.platform.startswith("win"):
-    SERIAL_PORT = "COM12"   # Windows 主控板串口号
+    SERIAL_PORT = "COM7"   # Windows 主控板串口号
 else:
     SERIAL_PORT = None      # macOS/Linux：自动搜索 USB 串口
 
 VOLTAGE_POLARITY = -1   # 默认为 1，云台转向与画面修正方向相反时设为 -1
-CAMERA_INDEX = 0        # 摄像头编号
+CAMERA_INDEX = 1        # 摄像头编号
 
 # 自动搜索串口时优先匹配的设备名关键字（按优先级排序）
 _PREFERRED_PORT_KEYWORDS = (

@@ -15,7 +15,7 @@ import time
 
 from board import board
 from vision import vision
-from config import SERIAL_PORT, VOLTAGE_POLARITY, resolve_serial_port
+from config import SERIAL_PORT, VOLTAGE_POLARITY
 
 MOTOR_SPEED = 180        # 云台转速度
 SEARCH_SPEED = MOTOR_SPEED * VOLTAGE_POLARITY   # 未发现目标标签时，向一个方向旋转搜索
@@ -120,7 +120,7 @@ def main():
     camera = vision.open_camera() # 打开摄像头
 
     try:
-        board.connect(resolve_serial_port(SERIAL_PORT)) # 连接控制板
+        board.connect(SERIAL_PORT) # 连接控制板
         board.set_servo_angle(90)  # 云台初始角度
         board.stop_motor_b()   # 一开始云台不动
         print("云台已就绪，开始按顺序执行任务。")

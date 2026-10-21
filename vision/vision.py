@@ -24,6 +24,14 @@ SHARPEN_AMOUNT = 1.0
 WINDOW_NAME = "AprilTag Detector"
 QUIT_KEYS = (ord("q"), ord("Q"), 27)  # q 或 Q 或 Esc 键
 
+# ==================== 圆检测参数（HoughCircles，来自 simpleCV） ====================
+CIRCLE_DP = 1            # 累加器分辨率，一般取 1
+CIRCLE_MIN_DIST = 50     # 两个圆心的最小距离，太小会把同一个圆当成好几个
+CIRCLE_PARAM1 = 100      # Canny 边缘检测阈值
+CIRCLE_PARAM2 = 40       # 累加器阈值，越大要求越严格、误检越少
+CIRCLE_MIN_RADIUS = 20   # 允许的最小半径
+CIRCLE_MAX_RADIUS = 200  # 允许的最大半径
+
 # ====================== 一、准备工作：摄像头与检测器 ======================
 
 def open_camera():
@@ -101,12 +109,52 @@ def read_tags(camera, detector):
     return frame, detector.detect(detection_image)  # 返回画面和识别结果
 
 
+def read_frame(camera):
+    """只读取一帧画面，不做 AprilTag 识别（找圆任务用）。
+
+    输入：camera 摄像头对象
+    输出：frame 当前帧图像；读取失败时返回 None
+    """
+
+    success, frame = camera.read()
+    if not success:
+        return None
+    return frame
+
+
+def detect_circles(frame):
+    """检测画面中的圆（HoughCircles 圆变换）。
+
+    输入：frame BGR 画面
+    输出：圆列表 [(x, y, r), ...]；没检测到时返回空列表
+    """
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # HoughCircles 只接受灰度图
+    gray = cv2.medianBlur(gray, 5)                  # 中值滤波，抑制噪点
+
+    circles = cv2.HoughCircles(
+        gray,
+        cv2.HOUGH_GRADIENT,
+        dp=CIRCLE_DP,
+        minDist=CIRCLE_MIN_DIST,
+        param1=CIRCLE_PARAM1,
+        param2=CIRCLE_PARAM2,
+        minRadius=CIRCLE_MIN_RADIUS,
+        maxRadius=CIRCLE_MAX_RADIUS,
+    )
+    if circles is None:
+        return []
+
+    return [(float(x), float(y), float(r)) for x, y, r in circles[0]]
+
+
 # ================== 三、画图与显示（先看整体，再拆细节） ==================
 
-def show_frame(frame, tags, status):
+def show_frame(frame, tags, status, circles=None):
     """在画面上绘制识别结果并显示。
 
-    输入：frame 画面；tags 标签列表；status 左上角提示文字
+    输入：frame 画面；tags 标签列表；status 左上角提示文字；
+         circles 圆列表（可选，找圆任务使用）
     输出：无（画面直接显示在窗口里）
     """
 
@@ -117,6 +165,8 @@ def show_frame(frame, tags, status):
     draw_center_cross(frame, center_x, center_y)  # 画中心十字线
     for tag in tags:
         draw_tag(frame, tag, center_x, center_y)  # 画每个标签
+    for circle in circles or []:
+        draw_circle(frame, circle, center_x, center_y)  # 画每个圆
 
     cv2.putText(
         frame,
@@ -162,6 +212,32 @@ def draw_tag(frame, tag, frame_center_x, frame_center_y):
         (0, 0, 255),
         2,
     )  # 标签旁写 ID 和坐标
+
+
+def draw_circle(frame, circle, frame_center_x, frame_center_y):
+    """在画面上绘制一个圆（外圈、圆心和坐标）。
+
+    输入：frame 画面；circle 圆 (x, y, r)；
+         frame_center_x/frame_center_y 画面中心坐标
+    输出：无（直接在 frame 上绘制）
+    """
+
+    x, y, r = circle
+    relative_x = x - frame_center_x  # 圆心相对画面中心的 X
+    relative_y = y - frame_center_y  # 圆心相对画面中心的 Y
+    center = (int(x), int(y))
+
+    cv2.circle(frame, center, int(r), (0, 255, 0), 2)  # 绿色外圈
+    cv2.circle(frame, center, 4, (0, 0, 255), -1)      # 红色圆心点
+    cv2.putText(
+        frame,
+        f"R:{r:.0f} X:{relative_x:.0f} Y:{relative_y:.0f}",
+        (center[0] + 10, center[1] - 10),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (0, 255, 0),
+        2,
+    )  # 圆旁写半径和坐标
 
 
 def draw_center_cross(frame, center_x, center_y):

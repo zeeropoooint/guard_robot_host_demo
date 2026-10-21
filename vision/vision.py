@@ -26,11 +26,11 @@ QUIT_KEYS = (ord("q"), ord("Q"), 27)  # q 或 Q 或 Esc 键
 
 # ==================== 圆检测参数（HoughCircles，来自 simpleCV） ====================
 CIRCLE_DP = 1            # 累加器分辨率，一般取 1
-CIRCLE_MIN_DIST = 50     # 两个圆心的最小距离，太小会把同一个圆当成好几个
+CIRCLE_MIN_DIST = 80     # 两个圆心的最小距离，太小会把同一个圆当成好几个
 CIRCLE_PARAM1 = 100      # Canny 边缘检测阈值
-CIRCLE_PARAM2 = 40       # 累加器阈值，越大要求越严格、误检越少
-CIRCLE_MIN_RADIUS = 20   # 允许的最小半径
-CIRCLE_MAX_RADIUS = 200  # 允许的最大半径
+CIRCLE_PARAM2 = 54       # 累加器阈值，用 simpleCV/camera_circle.py 实测标定后固定
+CIRCLE_MIN_RADIUS = 25   # 允许的最小半径
+CIRCLE_MAX_RADIUS = 150  # 允许的最大半径
 
 # ====================== 一、准备工作：摄像头与检测器 ======================
 

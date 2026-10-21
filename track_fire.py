@@ -38,14 +38,23 @@ from config import SERIAL_PORT, VOLTAGE_POLARITY
 MOTOR_SPEED = 180        # 云台转速度
 SEARCH_SPEED = MOTOR_SPEED * VOLTAGE_POLARITY   # 未发现目标标签时，向一个方向旋转搜索
 CENTER_HALF_WIDTH = 10   # 标签离画面中心多少像素以内算"居中"
+CENTER_DIRECTION = -1    # 标签/圆心回中的旋转方向：+1 默认，-1 反向（不影响搜索方向）
 
-# 标签附近找圆：标签锁定后，继续对准标签附近的圆心，对准后才执行动作
-AIM_CIRCLE_NEAR_TAG = True    # 总开关；单个任务可用 "aim_circle": False 关闭
+# 标签附近找圆：标签锁定后，找离标签最近的圆（杯口），对准圆心后才执行动作。
+# 总开关默认关闭，需要该功能的任务在任务里写 "aim_circle": True
+AIM_CIRCLE_NEAR_TAG = False   # 总开关；单个任务可用 "aim_circle": True 打开
 CIRCLE_NEAR_FACTOR = 2.5      # "附近"范围 = 标签对角线长度 × 该倍数
 CIRCLE_NEAR_MIN = 100         # "附近"范围的下限（像素），标签很小时保底
 
+# 俯仰角微调：摄像头固定、发射器在其头顶，标签贴在杯内底部，
+# 而要打进的是杯口（圆心），两者在画面里的垂直像素差 × 该系数 = 俯仰修正角。
+# 标定方法：先设 0 观察打印的垂直差，实测打高就把系数往负调、打低往正调
+PITCH_PER_PX = 0.06   # 度/像素
+
 # 自动识别舵机俯仰角度：每个任务开始前扫描角度，找目标垂直居中的位置
-AUTO_PITCH = True         # 总开关；False 时沿用任务里写死的 angle
+# 扫描会在 60～140° 之间来回摆动，对固定角度的老任务列表默认关闭；
+# 需要自动找角度时改为 True（任务里的 angle 则作为扫描起点）
+AUTO_PITCH = False        # 总开关；False 时沿用任务里写死的 angle
 PITCH_START = 90          # 扫描起点（任务写了 angle 则用它当起点）
 PITCH_MIN = 60            # 扫描下限（度）
 PITCH_MAX = 140           # 扫描上限（度）
@@ -60,16 +69,17 @@ AIM_OFFSET_PX = 0         # 0 表示画面中心
 TASKS = [
     # tag：标签编号；angle：舵机俯仰角度；
     # action：动作（laser 激光 / fire 发射）；offset：标签期望位置（右正左负，0 即画面中心）
-    {"tag": 1, "offset": -20, "angle": 102, "action": "fire", "hold": 6 },
-    {"tag": 2, "offset": -20, "angle": 102, "action": "fire", "hold": 6,},
+    {"tag": 1, "offset": -20, "angle": 102, "action": "fire", "hold": 6.5},
+    {"tag": 2, "offset": -20, "angle": 102, "action": "fire", "hold": 6.5},
     {"tag": 3, "offset": -20, "angle": 102, "action": "fire"},
     {"tag": 4, "offset": -54, "angle": 106, "action": "laser"},
     {"tag": 5, "offset": -19, "angle": 102, "action": "fire"},
     {"tag": 6, "offset": -38, "angle": 113, "action": "laser"},
-    {"tag": 7, "offset": -20, "angle": 100, "action": "fire"},
-    {"tag": 8, "offset": -20, "angle": 100, "action": "fire"},
+    {"tag": 7, "offset": -40, "angle": 110, "action": "fire"},
+    {"tag": 8, "offset": 0, "angle": 90, "action": "fire"},
     {"tag": 9, "offset": -75, "angle": 116, "action": "laser"},
     {"tag": 10, "offset": -20, "angle": 101, "action": "fire"},
+    # "aim_circle": True  使用时，标签任务会自动找圆并对准圆心，对准后才执行动作
     # 找圆任务示例：去掉下面一行的注释，就会在标签任务后追加"找圆 → 对准圆心 → 发射"
     # {"circle": True, "offset": -20, "angle": 102, "action": "fire"},
 ]
@@ -84,9 +94,9 @@ def motor_speed(error):
     """
 
     if error > CENTER_HALF_WIDTH:
-        return -MOTOR_SPEED * VOLTAGE_POLARITY   # 标签偏右，右转
+        return -MOTOR_SPEED * VOLTAGE_POLARITY * CENTER_DIRECTION   # 标签偏右，转向回中
     if error < -CENTER_HALF_WIDTH:
-        return MOTOR_SPEED * VOLTAGE_POLARITY    # 标签偏左，左转
+        return MOTOR_SPEED * VOLTAGE_POLARITY * CENTER_DIRECTION    # 标签偏左，转向回中
     return 0                                     # 标签居中
 
 
@@ -109,11 +119,12 @@ def execute_action(action):
 
 
 def pick_circle_near(circles, target, last_aim):
-    """从检测到的圆里挑出"标签附近"的圆。
+    """从检测到的圆里挑出"离标签最近"的圆。
 
-    优先围绕标签中心找：圆心与标签中心相距"标签对角线 × CIRCLE_NEAR_FACTOR"
-    以内（不小于 CIRCLE_NEAR_MIN）才算附近，有多个时选半径最大的
-    （同心圆即最外圈）。标签暂时丢失时，改为围绕上一次对准的圆心找，
+    以标签中心为参考：圆心与标签中心相距"标签对角线 × CIRCLE_NEAR_FACTOR"
+    以内（不小于 CIRCLE_NEAR_MIN）才算附近，有多个时选圆心离标签最近的
+    （杯口圆心就贴着杯底的标签，最近的才是本杯开口；最大半径可能选中
+    背景里更大的圆）。标签暂时丢失时，改为围绕上一次对准的圆心找，
     避免标签闪断导致目标来回跳。
     输入：circles 检测到的圆列表；target 目标标签（可能为 None）；
          last_aim 上一次对准的圆 (x, y, r)（可能为 None）
@@ -132,7 +143,8 @@ def pick_circle_near(circles, target, last_aim):
 
     near = [c for c in circles
             if math.hypot(c[0] - ref_x, c[1] - ref_y) <= near_dist]
-    return max(near, key=lambda c: c[2]) if near else None
+    return (min(near, key=lambda c: math.hypot(c[0] - ref_x, c[1] - ref_y))
+            if near else None)
 
 
 def scan_pitch(camera, detector, tag_id, use_circle, start_angle):
@@ -208,17 +220,21 @@ def scan_pitch(camera, detector, tag_id, use_circle, start_angle):
     return best_angle, True
 
 
-def track_tag(camera, detector, tag_id, offset, aim_circle=False):
+def track_tag(camera, detector, tag_id, offset, aim_circle=False,
+              base_pitch=PITCH_START):
     """跟踪指定 id 的标签直到期望位置（可改为对准标签附近的圆心）。
 
     输入：camera/detector 视觉对象；tag_id 目标标签 id；
          offset 期望的水平位置（相对画面中心的像素偏移，画面中心为 0）；
-         aim_circle True 时，标签锁定后继续对准标签附近的圆心
+         aim_circle True 时，标签锁定后继续对准离标签最近的圆心；
+         base_pitch 基准俯仰角（任务里的 angle），锁定圆心后按
+         "圆心 − 标签中心"的垂直像素差 × PITCH_PER_PX 微调
     输出：True 已到位；False 用户按 Q/Esc 退出。
     """
 
     last_speed = 0   # 上一次发送的速度（0 表示停止）
     last_aim = None  # 上一次对准的圆 (x, y, r)，标签丢失时按它找回圆
+    last_dy = 0      # 上一次"圆心 − 标签中心"的垂直像素差（标签闪断时沿用）
     while True:
         frame, tags = vision.read_tags(camera, detector)
         if frame is None:
@@ -241,8 +257,17 @@ def track_tag(camera, detector, tag_id, offset, aim_circle=False):
             status = f"圆心：偏差 {error}（半径 {aim[2]:.0f}）"
 
             if abs(error) <= CENTER_HALF_WIDTH:   # 圆心已到达瞄准位置
-                print(f"{status} |=> 锁定圆心")
-                board.set_motor_b(0) # 云台停止
+                # 按圆心相对标签中心的垂直像素差微调俯仰角：
+                # 标签贴在杯内底部，要打进的是杯口，两者高度差不一致
+                if target is not None:
+                    last_dy = int(aim[1] - target.center[1])
+                pitch = int(base_pitch + last_dy * PITCH_PER_PX)
+                pitch = max(PITCH_MIN, min(PITCH_MAX, pitch))  # 限制在安全范围
+                board.set_motor_b(0)  # 云台停止
+                board.set_servo_angle(pitch)  # 按圆心位置微调俯仰角
+                time.sleep(0.3)               # 等舵机走到位再执行动作
+                print(f"{status} |=> 锁定圆心，俯仰角 {pitch}°"
+                      f"（基准 {base_pitch}°，垂直差 {last_dy:+d}px）")
                 return True
         elif target is not None:
             # 偏差 = 测量值（标签位置）− 期望值（画面中心 + 任务指定的 offset）
@@ -363,7 +388,8 @@ def main():
             if is_circle:  # 找圆任务：对准圆心
                 ok = track_circle(camera, offset)
             else:          # 标签任务：跟踪标签（可再对准附近圆心）
-                ok = track_tag(camera, detector, task["tag"], offset, aim_circle)
+                ok = track_tag(camera, detector, task["tag"], offset,
+                               aim_circle, start_angle)
             if not ok:     # 用户退出，跳过剩余任务
                 break
 

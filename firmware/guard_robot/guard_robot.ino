@@ -72,6 +72,26 @@ const unsigned long SERVO_UPDATE_INTERVAL_MS = 20;
 // 发射或装填开始后先运行固定时间，使机构完全离开当前传感器检测位置。
 const unsigned long LEAVE_SENSOR_DELAY_MS = 500;
 
+// 发射/装填时 A 电机的驱动速度。原 255 全速连续运转会严重发热
+// （绕组绝缘漆已出现腥甜味），降到 180 降低电流与温升；
+// 装填用时自动取发射实测值，降速后 90° 用时会自动变长，无需改时间。
+const int ACTION_MOTOR_SPEED = 255;
+
+// 位置传感器检测到定位点后，A 电机断电仍会因惯性滑过定位点。
+// 停车前先反向通电一小段时间刹车，使机构停在 90° 定位点上。
+// 实测仍过冲就增大 ACTION_BRAKE_MS / ACTION_BRAKE_SPEED，退回过头则减小。
+const int ACTION_BRAKE_SPEED = 120;
+const unsigned long ACTION_BRAKE_MS = 10;
+
+// 一次发射/装填动作的最长等待时间。超过后判定机构卡住或传感器异常，
+// 主动停车并在串口打印错误，避免程序永久停在等待循环里。
+const unsigned long ACTION_TIMEOUT_MS = 5000;
+
+// 装填方向的位置传感器始终为 HIGH，无法用它定位 90°，因此装填改为
+// 按时间定角：优先用最近一次发射实测的 90° 用时，本次上电还没发射过
+// 时用下面的默认值（需按实际机构实测标定，太短/太长就改这里）。
+const unsigned long LOAD_STEP_MS = 990;
+
 // B 电机锁定时，蜂鸣器鸣响 200 ms、静音 800 ms，循环提示锁定状态。
 const unsigned int BUZZER_FREQUENCY_HZ = 2000;
 const unsigned long BUZZER_ON_DURATION_MS = 200;
@@ -105,6 +125,9 @@ bool motorBLocked = false;
 // B 电机定时命令采用非阻塞计时，确保锁定按键能随时让电机立即停止。
 bool motorBTimedRunActive = false;
 unsigned long motorBStopTime = 0;
+
+// 最近一次发射实测的 90° 用时（毫秒）；0 表示本次上电还没发射过。
+unsigned long lastStepDurationMs = 0;
 
 bool buzzerIsOn = false;
 unsigned long buzzerLastChangeTime = 0;
@@ -510,37 +533,65 @@ void runMotorBTimed(int speedValue, unsigned long durationMs) {
 // ============================== 发射与装填 ==============================
 
 /*
- * 执行一次发射动作。
- * 先让 A 电机沿发射方向运行 500 ms，确保机构离开当前检测点；
- * 随后等待位置传感器变为 HIGH，到达下一个机械位置后立即停止。
+ * 执行一次发射动作：A 电机沿发射方向转动，到位置传感器检测点停车。
+ * 同时记录从离开上一个检测点到到达下一个检测点的用时（即 90° 用时），
+ * 供装填动作使用——装填方向的位置传感器一直为 HIGH，不能用来定位。
  */
 void fireOnce() {
-  digitalWrite(MOTOR_LEVEL_PIN_A, LOW);
-  analogWrite(MOTOR_PWM_PIN_A, 255);
+  unsigned long startTime = millis();   // 超时计时起点
+  setMotorA(-ACTION_MOTOR_SPEED);
   delayWithMotorBControl(LEAVE_SENSOR_DELAY_MS);
 
-  while (digitalRead(POSITION_SENSOR_PIN) == LOW) {
-    // 等待发射机构到达下一个位置传感器检测点。
-    serviceMotorBControl();
+  // 500 ms 后传感器仍为 HIGH，说明机构还没离开当前检测点：
+  // 先等它变为 LOW，再等下一个检测点，避免把当前点误判成下一个 90° 位置。
+  if (digitalRead(POSITION_SENSOR_PIN) == HIGH) {
+    while (digitalRead(POSITION_SENSOR_PIN) == HIGH) {
+      if ((millis() - startTime) >= ACTION_TIMEOUT_MS) {
+        setMotorA(0);
+        Serial.print("发射超时：位置传感器一直未离开当前检测点\n");
+        return;
+      }
+      serviceMotorBControl();
+    }
   }
 
+  unsigned long stepStart = millis();   // 从离开检测点开始计 90° 用时
+  while (digitalRead(POSITION_SENSOR_PIN) == LOW) {
+    // 等待机构到达下一个位置传感器检测点（相邻检测点相隔 90°）。
+    if ((millis() - startTime) >= ACTION_TIMEOUT_MS) {
+      setMotorA(0);
+      Serial.print("发射超时：未检测到下一个 90° 定位点\n");
+      return;
+    }
+    serviceMotorBControl();
+  }
+  lastStepDurationMs = millis() - stepStart;
+  Serial.print("发射 90° 用时 ");
+  Serial.print(lastStepDurationMs);
+  Serial.print(" ms\n");
+
+  // 到达检测点：反向通电刹车，抵消惯性造成的过冲，再断电停住。
+  setMotorA(ACTION_BRAKE_SPEED);
+  delayWithMotorBControl(ACTION_BRAKE_MS);
   setMotorA(0);
 }
 
 
 /*
  * 执行一次装填动作。
- * 控制流程与发射相同，但 A 电机沿装填方向运行。
+ * 装填方向的位置传感器一直保持 HIGH，无法用它定位 90°，因此按时间定角：
+ * 用最近一次发射实测的 90° 用时反向转动；本次上电还没发射过时用
+ * LOAD_STEP_MS。要精确控制时，先发射一次让程序测出实际用时。
  */
 void loadOnce() {
-  digitalWrite(MOTOR_LEVEL_PIN_A, HIGH);
-  analogWrite(MOTOR_PWM_PIN_A, 0);
-  delayWithMotorBControl(LEAVE_SENSOR_DELAY_MS);
+  unsigned long duration = lastStepDurationMs > 0
+      ? lastStepDurationMs : LOAD_STEP_MS;
 
-  while (digitalRead(POSITION_SENSOR_PIN) == LOW) {
-    // 等待装填机构到达下一个位置传感器检测点。
-    serviceMotorBControl();
-  }
+  setMotorA(ACTION_MOTOR_SPEED);
+  delayWithMotorBControl(duration);
 
+  // 反向短脉冲刹车，减少惯性带来的多转。
+  setMotorA(-ACTION_BRAKE_SPEED);
+  delayWithMotorBControl(ACTION_BRAKE_MS);
   setMotorA(0);
 }

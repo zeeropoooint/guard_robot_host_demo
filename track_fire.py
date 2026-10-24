@@ -24,8 +24,11 @@
                   （填了则作为扫描起点）。识别结果只在本次运行使用。
         期望位置：任务不写 offset 时，水平瞄准位置自动取 AIM_OFFSET_PX
                   （默认画面中心 0）；写了 offset 则沿用任务里的值。
+        搜索方式：任务写 "search": False 时，未发现该标签云台不转动、
+                  原地等待标签出现在画面里（任务 1 默认如此）。
 
-操作：在摄像头窗口按 Q 或 Esc 退出。
+操作：在摄像头窗口按数字键 1~9 立即跳到对应任务（0 表示任务 10），
+      跳过后从该任务继续按原顺序执行；按 Q 或 Esc 退出。
 """
 
 import math
@@ -39,6 +42,7 @@ MOTOR_SPEED = 180        # 云台转速度
 SEARCH_SPEED = MOTOR_SPEED * VOLTAGE_POLARITY   # 未发现目标标签时，向一个方向旋转搜索
 CENTER_HALF_WIDTH = 10   # 标签离画面中心多少像素以内算"居中"
 CENTER_DIRECTION = -1    # 标签/圆心回中的旋转方向：+1 默认，-1 反向（不影响搜索方向）
+DETECT_SETTLE = 0.15     # 识别到标签后先停止左右转动、等云台停稳的秒数
 
 # 标签附近找圆：标签锁定后，找离标签最近的圆（杯口），对准圆心后才执行动作。
 # 总开关默认关闭，需要该功能的任务在任务里写 "aim_circle": True
@@ -69,16 +73,17 @@ AIM_OFFSET_PX = 0         # 0 表示画面中心
 TASKS = [
     # tag：标签编号；angle：舵机俯仰角度；
     # action：动作（laser 激光 / fire 发射）；offset：标签期望位置（右正左负，0 即画面中心）
-    {"tag": 1, "offset": -20, "angle": 102, "action": "fire", "hold": 6.5},
-    {"tag": 2, "offset": -20, "angle": 102, "action": "fire", "hold": 6.5},
-    {"tag": 3, "offset": -20, "angle": 102, "action": "fire"},
-    {"tag": 4, "offset": -54, "angle": 106, "action": "laser"},
-    {"tag": 5, "offset": -19, "angle": 102, "action": "fire"},
-    {"tag": 6, "offset": -38, "angle": 113, "action": "laser"},
-    {"tag": 7, "offset": -40, "angle": 110, "action": "fire"},
-    {"tag": 8, "offset": 0, "angle": 90, "action": "fire"},
-    {"tag": 9, "offset": -75, "angle": 116, "action": "laser"},
-    {"tag": 10, "offset": -20, "angle": 101, "action": "fire"},
+    # search：可选，False 表示未发现该标签时云台不转动、原地等待（缺省为搜索转动）
+    {"tag": 1, "offset": -45, "angle": 110, "action": "fire", "hold": 6.5, "search": False},
+    {"tag": 2, "offset": -45, "angle": 110, "action": "fire", "hold": 6.5},
+    {"tag": 3, "offset": -45, "angle": 110, "action": "fire"},
+    {"tag": 4, "offset": -61, "angle": 105, "action": "laser"},
+    {"tag": 5, "offset": 10, "angle": 105, "action": "fire"},
+    {"tag": 6, "offset": -57, "angle": 114, "action": "laser"},
+    {"tag": 7, "offset": -55, "angle": 106, "action": "fire"},
+    {"tag": 8, "offset": 214, "angle": 87, "action": "fire"},
+    {"tag": 9, "offset": -38, "angle": 120, "action": "laser"},
+    {"tag": 10, "offset": 6, "angle": 105, "action": "fire"},
     # "aim_circle": True  使用时，标签任务会自动找圆并对准圆心，对准后才执行动作
     # 找圆任务示例：去掉下面一行的注释，就会在标签任务后追加"找圆 → 对准圆心 → 发射"
     # {"circle": True, "offset": -20, "angle": 102, "action": "fire"},
@@ -98,6 +103,20 @@ def motor_speed(error):
     if error < -CENTER_HALF_WIDTH:
         return MOTOR_SPEED * VOLTAGE_POLARITY * CENTER_DIRECTION    # 标签偏左，转向回中
     return 0                                     # 标签居中
+
+
+def key_to_task_index(key):
+    """把按键转换成任务序号。
+
+    数字键 1～9 对应任务 1～9，数字键 0 对应任务 10；其余按键返回 None。
+    输入：key 按键值；输出：任务序号（1 起）或 None。
+    """
+
+    if ord("1") <= key <= ord("9"):
+        return key - ord("0")
+    if key == ord("0"):
+        return 10
+    return None
 
 
 def execute_action(action):
@@ -221,20 +240,23 @@ def scan_pitch(camera, detector, tag_id, use_circle, start_angle):
 
 
 def track_tag(camera, detector, tag_id, offset, aim_circle=False,
-              base_pitch=PITCH_START):
+              base_pitch=PITCH_START, search=True):
     """跟踪指定 id 的标签直到期望位置（可改为对准标签附近的圆心）。
 
     输入：camera/detector 视觉对象；tag_id 目标标签 id；
          offset 期望的水平位置（相对画面中心的像素偏移，画面中心为 0）；
          aim_circle True 时，标签锁定后继续对准离标签最近的圆心；
          base_pitch 基准俯仰角（任务里的 angle），锁定圆心后按
-         "圆心 − 标签中心"的垂直像素差 × PITCH_PER_PX 微调
-    输出：True 已到位；False 用户按 Q/Esc 退出。
+         "圆心 − 标签中心"的垂直像素差 × PITCH_PER_PX 微调；
+         search True 时未发现目标会左右转动搜索，False 则原地等待
+    输出：True 已到位；False 用户按 Q/Esc 退出；
+         整数 n 表示按了数字键，请求跳到任务 n。
     """
 
     last_speed = 0   # 上一次发送的速度（0 表示停止）
     last_aim = None  # 上一次对准的圆 (x, y, r)，标签丢失时按它找回圆
     last_dy = 0      # 上一次"圆心 − 标签中心"的垂直像素差（标签闪断时沿用）
+    searching = True # 是否处于左右转动搜索目标的状态
     while True:
         frame, tags = vision.read_tags(camera, detector)
         if frame is None:
@@ -249,44 +271,60 @@ def track_tag(camera, detector, tag_id, offset, aim_circle=False,
             circles = vision.detect_circles(frame)
             aim = pick_circle_near(circles, target, last_aim)
 
-        if aim is not None:
-            # 标签附近有圆：以圆心为瞄准点
-            last_aim = aim
-            error = int(aim[0] - center_x - offset)
-            speed = motor_speed(error)
-            status = f"圆心：偏差 {error}（半径 {aim[2]:.0f}）"
+        if target is None and aim is None:
+            if search:
+                # 没发现目标：云台左右转动搜索，直到标签进入画面
+                searching = True
+                speed = SEARCH_SPEED
+                status = f"标签 {tag_id}：未发现，搜索中"
+            else:
+                # 不搜索：云台保持不动，原地等待标签进入画面
+                speed = 0
+                status = f"标签 {tag_id}：未发现，原地等待"
+        else:
+            if searching:   # 刚识别到目标：先停止左右转动，再做精细对准
+                searching = False
+                if search:
+                    board.set_motor_b(0)
+                    last_speed = 0
+                    print(f"    识别到标签 {tag_id}，停止左右转动，开始对准。")
+                    time.sleep(DETECT_SETTLE)   # 等云台停稳再测偏差
 
-            if abs(error) <= CENTER_HALF_WIDTH:   # 圆心已到达瞄准位置
-                # 按圆心相对标签中心的垂直像素差微调俯仰角：
-                # 标签贴在杯内底部，要打进的是杯口，两者高度差不一致
-                if target is not None:
-                    last_dy = int(aim[1] - target.center[1])
-                pitch = int(base_pitch + last_dy * PITCH_PER_PX)
-                pitch = max(PITCH_MIN, min(PITCH_MAX, pitch))  # 限制在安全范围
-                board.set_motor_b(0)  # 云台停止
-                board.set_servo_angle(pitch)  # 按圆心位置微调俯仰角
-                time.sleep(0.3)               # 等舵机走到位再执行动作
-                print(f"{status} |=> 锁定圆心，俯仰角 {pitch}°"
-                      f"（基准 {base_pitch}°，垂直差 {last_dy:+d}px）")
-                return True
-        elif target is not None:
-            # 偏差 = 测量值（标签位置）− 期望值（画面中心 + 任务指定的 offset）
-            error = int(target.center[0] - center_x - offset)
-            status = f"标签 {tag_id}：偏差 {error}"
+            if aim is not None:
+                # 标签附近有圆：以圆心为瞄准点
+                last_aim = aim
+                error = int(aim[0] - center_x - offset)
+                speed = motor_speed(error)
+                status = f"圆心：偏差 {error}（半径 {aim[2]:.0f}）"
 
-            if abs(error) <= CENTER_HALF_WIDTH:   # 偏差在阈值内，认为已居中
-                if aim_circle:
-                    speed = 0                     # 标签已居中，原地等待附近出现圆
-                    status = f"{status}，等待出现圆"
-                else:
-                    print(f"{status} |=> 锁定目标")
-                    board.set_motor_b(0) # 云台停止
+                if abs(error) <= CENTER_HALF_WIDTH:   # 圆心已到达瞄准位置
+                    # 按圆心相对标签中心的垂直像素差微调俯仰角：
+                    # 标签贴在杯内底部，要打进的是杯口，两者高度差不一致
+                    if target is not None:
+                        last_dy = int(aim[1] - target.center[1])
+                    pitch = int(base_pitch + last_dy * PITCH_PER_PX)
+                    pitch = max(PITCH_MIN, min(PITCH_MAX, pitch))  # 限制在安全范围
+                    board.set_motor_b(0)  # 云台停止
+                    board.set_servo_angle(pitch)  # 按圆心位置微调俯仰角
+                    time.sleep(0.3)               # 等舵机走到位再执行动作
+                    print(f"{status} |=> 锁定圆心，俯仰角 {pitch}°"
+                          f"（基准 {base_pitch}°，垂直差 {last_dy:+d}px）")
                     return True
             else:
-                speed = motor_speed(error)
-        else:
-            speed = SEARCH_SPEED   # 没发现目标标签，云台转动搜索
-            status = f"标签 {tag_id}：未发现，搜索中"
+                # 偏差 = 测量值（标签位置）− 期望值（画面中心 + 任务指定的 offset）
+                error = int(target.center[0] - center_x - offset)
+                status = f"标签 {tag_id}：偏差 {error}"
+
+                if abs(error) <= CENTER_HALF_WIDTH:   # 偏差在阈值内，认为已居中
+                    if aim_circle:
+                        speed = 0                     # 标签已居中，原地等待附近出现圆
+                        status = f"{status}，等待出现圆"
+                    else:
+                        print(f"{status} |=> 锁定目标")
+                        board.set_motor_b(0) # 云台停止
+                        return True
+                else:
+                    speed = motor_speed(error)
 
         # 只在速度变化时发送命令
         if speed != last_speed:
@@ -296,9 +334,14 @@ def track_tag(camera, detector, tag_id, offset, aim_circle=False,
             print(status)
 
         vision.show_frame(frame, tags, status, circles)
-        if vision.is_quit_key(vision.wait_key()):
+        key = vision.wait_key()
+        if vision.is_quit_key(key):
             print("按 Q 或 Esc 退出。")
             return False
+        jump = key_to_task_index(key)   # 数字键：停住云台，返回任务序号
+        if jump is not None and jump <= len(TASKS):
+            board.set_motor_b(0)
+            return jump
 
 
 def track_circle(camera, offset):
@@ -306,7 +349,8 @@ def track_circle(camera, offset):
 
     输入：camera 摄像头对象；offset 期望的圆心水平位置
          （相对画面中心的像素偏移，画面中心为 0）
-    输出：True 已到位；False 用户按 Q/Esc 退出。
+    输出：True 已到位；False 用户按 Q/Esc 退出；
+         整数 n 表示按了数字键，请求跳到任务 n。
     """
 
     last_speed = 0   # 上一次发送的速度（0 表示停止）
@@ -344,9 +388,14 @@ def track_circle(camera, offset):
             print(status)
 
         vision.show_frame(frame, [], status, circles)
-        if vision.is_quit_key(vision.wait_key()):
+        key = vision.wait_key()
+        if vision.is_quit_key(key):
             print("按 Q 或 Esc 退出。")
             return False
+        jump = key_to_task_index(key)   # 数字键：停住云台，返回任务序号
+        if jump is not None and jump <= len(TASKS):
+            board.set_motor_b(0)
+            return jump
 
 
 def main():
@@ -357,9 +406,12 @@ def main():
         board.connect(SERIAL_PORT) # 连接控制板
         board.set_servo_angle(90)  # 云台初始角度
         board.stop_motor_b()   # 一开始云台不动
-        print("云台已就绪，开始按顺序执行任务。")
+        print("云台已就绪，开始按顺序执行任务。"
+              "按数字键 1~9（0=任务 10）可随时切换任务。")
 
-        for i, task in enumerate(TASKS, 1):
+        i = 0   # 当前任务下标（0 起）；数字键跳转后从这里继续按顺序执行
+        while i < len(TASKS):
+            task = TASKS[i]
             is_circle = bool(task.get("circle"))   # True：找圆任务；False：标签任务
             # 标签任务默认锁定后继续对准附近的圆心（总开关 AIM_CIRCLE_NEAR_TAG，
             # 单个任务可用 "aim_circle": False 关闭）
@@ -373,7 +425,7 @@ def main():
                 target_name = f"标签 {task['tag']} + 圆心"
             else:
                 target_name = f"标签 {task['tag']}"
-            print(f"\n=== 任务 {i}/{len(TASKS)}：{target_name}，"
+            print(f"\n=== 任务 {i+1}/{len(TASKS)}：{target_name}，"
                   f"动作 {task['action']}，瞄准位置 {offset:+d} ===")
 
             angle = start_angle
@@ -386,18 +438,24 @@ def main():
             board.set_servo_angle(angle)  # 调整装置俯仰角度
 
             if is_circle:  # 找圆任务：对准圆心
-                ok = track_circle(camera, offset)
+                result = track_circle(camera, offset)
             else:          # 标签任务：跟踪标签（可再对准附近圆心）
-                ok = track_tag(camera, detector, task["tag"], offset,
-                               aim_circle, start_angle)
-            if not ok:     # 用户退出，跳过剩余任务
+                result = track_tag(camera, detector, task["tag"], offset,
+                                   aim_circle, start_angle,
+                                   task.get("search", True))
+            if result is False:   # 用户退出，跳过剩余任务
                 break
+            if type(result) is int:   # 按了数字键：跳到对应任务重新执行
+                i = result - 1
+                print(f"\n>>> 切换到任务 {i+1}/{len(TASKS)}")
+                continue
 
             execute_action(task["action"])  # 目标到位后执行动作
             hold = task.get("hold", 0)      # 可选：动作后停留，云台保持不动
             if hold:
                 print(f"    停留 {hold} 秒……")
                 time.sleep(hold)
+            i += 1   # 正常完成，进入下一个任务
         else:
             print("\n所有任务完成。")
     finally:

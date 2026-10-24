@@ -4,6 +4,6 @@
 更换硬件连接时只需修改此文件。
 """
 
-SERIAL_PORT = "COM8"   # 主控板串口号
+SERIAL_PORT = "COM6"   # 主控板串口号
 VOLTAGE_POLARITY = 1   # 默认为 1，云台转向与画面修正方向相反时设为 -1
 CAMERA_INDEX = 2        # 摄像头编号

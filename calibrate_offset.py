@@ -30,7 +30,7 @@ from config import SERIAL_PORT, VOLTAGE_POLARITY
 
 # ============================== 参数 ==============================
 MOTOR_SPEED = 180        # 自动模式云台转速
-SEARCH_SPEED = MOTOR_SPEED * VOLTAGE_POLARITY   # 未发现标签时的搜索方向
+SEARCH_SPEED = -MOTOR_SPEED * VOLTAGE_POLARITY  # 未发现标签时的搜索方向（取反=与原方向相反）
 CENTER_HALF_WIDTH = 10   # 标签离画面中心多少像素以内算"居中"
 
 PAN_NUDGE_SPEED = 200    # 手动模式云台点动速度

@@ -85,7 +85,7 @@ const unsigned long ACTION_BRAKE_MS = 10;
 
 // 一次发射/装填动作的最长等待时间。超过后判定机构卡住或传感器异常，
 // 主动停车并在串口打印错误，避免程序永久停在等待循环里。
-const unsigned long ACTION_TIMEOUT_MS = 5000;
+const unsigned long ACTION_TIMEOUT_MS = 1500;
 
 // 装填方向的位置传感器始终为 HIGH，无法用它定位 90°，因此装填改为
 // 按时间定角：优先用最近一次发射实测的 90° 用时，本次上电还没发射过

@@ -1,5 +1,10 @@
 """摄像头示例：打开摄像头并显示实时画面。"""
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # 项目根目录加入模块搜索路径
+
 import cv2
 
 from vision import vision

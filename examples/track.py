@@ -1,42 +1,37 @@
-"""PID 比例控制：用云台（电机 B）跟踪 AprilTag
+"""云台（电机 B）跟踪 AprilTag
 
 策略：
     没发现标签 → 云台停止
-    发现标签   → 云台转动（比例控制：偏差越大转速越大）
+    发现标签   → 云台转动
     标签居中   → 云台停止
 
 操作：在摄像头窗口按 Q 或 Esc 退出。
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # 项目根目录加入模块搜索路径
+
 from board import board
 from vision import vision
 from config import SERIAL_PORT, VOLTAGE_POLARITY
 
-CENTER_HALF_WIDTH = 15 # 标签离画面中心多少像素以内算"居中"
-MAX_SPEED = 255        # 云台最大速度（转速上限）
-MIN_SPEED = 150        # 云台最小速度（太低电机带不动，太高会过冲，取能爬行的最低值）
-KP = 3                 # PID 比例系数：偏差每 1 像素对应的转速
+MOTOR_SPEED = 200        # 云台转速度
+CENTER_HALF_WIDTH = 15   # 标签离画面中心多少像素以内算"居中"
 
 def motor_speed(error):
-    """根据偏差算出云台速度（比例控制：偏差越大，转得越快）。
+    """根据偏差算出云台速度。
 
-    偏差：偏右为正，偏左为负，越远数字越大。
-    举例：偏差 30 像素 × 比例系数 3 = 速度 90
+    输入：error 偏差
+    输出：速度；偏差在居中范围内时返回 0。
     """
-    # 在偏差范围内，speed 设置为 0
-    if abs(error) < CENTER_HALF_WIDTH:
-        return 0
 
-    # 按比例算速度，负号让云台朝标签方向转
-    speed = int(-error * KP)
-
-    # 限幅：太快会转过头，太慢电机带不动
-    if speed >= 0:
-        direction = 1
-    else:
-        direction = -1
-    magnitude = max(MIN_SPEED, min(MAX_SPEED, abs(speed)))
-    return direction * magnitude * VOLTAGE_POLARITY
+    if error > CENTER_HALF_WIDTH:
+        return -MOTOR_SPEED * VOLTAGE_POLARITY   # 标签偏右，右转
+    if error < -CENTER_HALF_WIDTH:
+        return MOTOR_SPEED * VOLTAGE_POLARITY    # 标签偏左，左转
+    return 0                                     # 标签居中
 
 
 def main():
@@ -61,7 +56,7 @@ def main():
             if tags:
                 # 偏差 = 测量值（标签位置）− 期望值（画面中心 0）
                 error = int(tags[0].center[0] - center_x)
-                speed = motor_speed(error)   # PID 比例控制
+                speed = motor_speed(error)   # 根据偏差算出云台速度
                 status=f"偏差：{error}"
             else:
                 speed = 0                   # 没发现标签，云台停止

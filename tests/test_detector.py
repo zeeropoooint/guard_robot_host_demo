@@ -1,5 +1,10 @@
 """AprilTag 示例：检测标签并在窗口中显示识别结果。"""
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # 项目根目录加入模块搜索路径
+
 from vision import vision
 
 

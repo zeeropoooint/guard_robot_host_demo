@@ -20,6 +20,11 @@
 记录后画面中会出现一条黄色竖线，标记已保存的期望位置。
 """
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # 项目根目录加入模块搜索路径
+
 import time
 
 import cv2

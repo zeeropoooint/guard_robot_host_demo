@@ -2,6 +2,9 @@
 
 import msvcrt
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # 项目根目录加入模块搜索路径
 
 from board import board
 from config import SERIAL_PORT

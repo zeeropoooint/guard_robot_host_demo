@@ -143,12 +143,12 @@ uv run track_fire.py
 
 # 上位机示例程序
 
-项目根目录下提供了多个独立示例，可以先分别验证摄像头、AprilTag 检测和控制板，再运行主程序。
+`tests/` 和 `examples/` 目录下提供了多个独立脚本，可以先分别验证摄像头、AprilTag 检测和控制板，再运行主程序。各文件详细作用见 [文件说明.md](文件说明.md)。
 
 ## 1. 测试摄像头
 
 ```powershell
-uv run test_camera.py
+uv run tests/test_camera.py
 ```
 
 打开实时画面，在画面窗口按 **Q** 或 **Esc** 退出。
@@ -156,7 +156,7 @@ uv run test_camera.py
 ## 2. 测试 AprilTag 检测
 
 ```powershell
-uv run test_detector.py
+uv run tests/test_detector.py
 ```
 
 程序会显示检测到的标签边框、ID 以及相对画面中心的坐标。在画面窗口按 **Q** 或 **Esc** 退出。
@@ -164,13 +164,13 @@ uv run test_detector.py
 ## 3. 测试控制板
 
 ```powershell
-uv run test_board.py
+uv run tests/test_board.py
 ```
 
 也可以把串口作为第一个参数传入：
 
 ```powershell
-uv run test_board.py COM3
+uv run tests/test_board.py COM3
 ```
 
 控制板示例按键：
@@ -190,7 +190,7 @@ uv run test_board.py COM3
 ## 4. 云台跟踪（track.py）
 
 ```powershell
-uv run track.py
+uv run examples/track.py
 ```
 
 开关式跟踪：发现 AprilTag 后，云台按**固定速度**转动——标签偏右就右转、偏左就左转，标签进入画面中心范围（`CENTER_HALF_WIDTH`）就停止；没发现标签则云台停住。转速固定，不随偏差变化，逻辑最简单，适合先理解"让云台自己追标签"的基本思路。
@@ -198,7 +198,7 @@ uv run track.py
 ## 5. PID 比例跟踪（track\_pid.py）
 
 ```powershell
-uv run track_pid.py
+uv run examples/track_pid.py
 ```
 
 PID 比例控制（P 控制）：同样是发现标签后云台跟踪，但转速与偏差成正比——**偏差越大转得越快，越靠近中心转得越慢**，对准后停止。比开关式更平滑，不易在中心附近来回摆动。可调参数都在文件顶部：

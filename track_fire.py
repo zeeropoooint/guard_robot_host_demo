@@ -38,7 +38,7 @@ from board import board
 from vision import vision
 from config import SERIAL_PORT, VOLTAGE_POLARITY
 
-MOTOR_SPEED = 160        # 云台转速度
+MOTOR_SPEED = 200        # 云台转速度
 SEARCH_SPEED = MOTOR_SPEED * VOLTAGE_POLARITY   # 未发现目标标签时，向一个方向旋转搜索
 CENTER_HALF_WIDTH = 10   # 标签离画面中心多少像素以内算"居中"
 CENTER_DIRECTION = -1    # 标签/圆心回中的旋转方向：+1 默认，-1 反向（不影响搜索方向）
@@ -77,12 +77,12 @@ TASKS = [
     {"tag": 1, "offset": -45, "angle": 110, "action": "fire", "hold": 6.5, "search": False},
     {"tag": 2, "offset": -45, "angle": 110, "action": "fire", "hold": 6.5},
     {"tag": 3, "offset": -45, "angle": 110, "action": "fire"},
-    {"tag": 4, "offset": -24, "angle": 110, "action": "laser"},
+    {"tag": 4, "offset": -56, "angle": 97, "action": "laser"},
     {"tag": 5, "offset": 10, "angle": 105, "action": "fire"},
     {"tag": 6, "offset": -29, "angle": 109, "action": "laser"},
     {"tag": 7, "offset": -99, "angle": 104, "action": "fire"},
     {"tag": 8, "offset": 233, "angle": 90, "action": "fire"},
-    {"tag": 9, "offset": -24, "angle": 116, "action": "laser"},
+    {"tag": 9, "offset": -56, "angle": 116, "action": "laser"},
     {"tag": 10, "offset": 9, "angle": 105, "action": "fire"},
     # "aim_circle": True  使用时，标签任务会自动找圆并对准圆心，对准后才执行动作
     # 找圆任务示例：去掉下面一行的注释，就会在标签任务后追加"找圆 → 对准圆心 → 发射"
@@ -269,7 +269,7 @@ def track_tag(camera, detector, tag_id, offset, aim_circle=False,
         circles = None
         if aim_circle:
             circles = vision.detect_circles(frame)
-            aim = pick_circle_near(circles, target, last_aim)
+            aim = vision.pick_circle_near(circles, target, last_aim)
 
         if target is None and aim is None:
             if search:
@@ -338,7 +338,7 @@ def track_tag(camera, detector, tag_id, offset, aim_circle=False,
         if vision.is_quit_key(key):
             print("按 Q 或 Esc 退出。")
             return False
-        jump = key_to_task_index(key)   # 数字键：停住云台，返回任务序号
+        jump = vision.key_to_task_index(key)   # 数字键：停住云台，返回任务序号
         if jump is not None and jump <= len(TASKS):
             board.set_motor_b(0)
             return jump
@@ -392,7 +392,7 @@ def track_circle(camera, offset):
         if vision.is_quit_key(key):
             print("按 Q 或 Esc 退出。")
             return False
-        jump = key_to_task_index(key)   # 数字键：停住云台，返回任务序号
+        jump = vision.key_to_task_index(key)   # 数字键：停住云台，返回任务序号
         if jump is not None and jump <= len(TASKS):
             board.set_motor_b(0)
             return jump

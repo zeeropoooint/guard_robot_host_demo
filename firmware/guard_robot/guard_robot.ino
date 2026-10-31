@@ -195,13 +195,14 @@ void setup() {
   setMotorA(0);
   setMotorB(0);
 
-  for (int i = 0; i < 2; i++)
-  {
-    tone(BUZZER_PIN, 2000U);
-    delay(250);
-    noTone(BUZZER_PIN);
-    delay(250);
-  }
+  // 蜂鸣器暂时停用（代码保留，需要时取消注释即可）：
+  // for (int i = 0; i < 2; i++)
+  // {
+  //   tone(BUZZER_PIN, 2000U);
+  //   delay(250);
+  //   noTone(BUZZER_PIN);
+  //   delay(250);
+  // }
   
   Serial.print("Guard_robot控制板程序已启动 当前版本:V1.0\n");
 
@@ -367,7 +368,8 @@ void serviceMotorBControl() {
   }
 
   updateMotorBTimedRun();
-  updateBuzzer();
+  // 蜂鸣器暂时停用（代码保留，需要时取消注释即可）：
+  // updateBuzzer();
 }
 
 
@@ -382,14 +384,16 @@ void toggleMotorBLock() {
     setMotorB(0);
 
     // 进入锁定状态时立即鸣响一次，再按设定的开/关时间循环。
-    buzzerIsOn = true;
-    buzzerLastChangeTime = millis();
-    tone(BUZZER_PIN, BUZZER_FREQUENCY_HZ);
+    // 蜂鸣器暂时停用（代码保留，需要时取消注释即可）：
+    // buzzerIsOn = true;
+    // buzzerLastChangeTime = millis();
+    // tone(BUZZER_PIN, BUZZER_FREQUENCY_HZ);
   }
   else {
     // 解锁后立即关闭蜂鸣器。
-    buzzerIsOn = false;
-    noTone(BUZZER_PIN);
+    // 蜂鸣器暂时停用（代码保留，需要时取消注释即可）：
+    // buzzerIsOn = false;
+    // noTone(BUZZER_PIN);
   }
 }
 
@@ -399,7 +403,7 @@ void updateBuzzer() {
   if (!motorBLocked) {
     if (buzzerIsOn) {
       buzzerIsOn = false;
-      noTone(BUZZER_PIN);
+      // noTone(BUZZER_PIN);   // 蜂鸣器暂时停用，需要时取消注释
     }
     return;
   }
@@ -411,10 +415,10 @@ void updateBuzzer() {
     buzzerIsOn = !buzzerIsOn;
     buzzerLastChangeTime = millis();
     if (buzzerIsOn) {
-      tone(BUZZER_PIN, BUZZER_FREQUENCY_HZ);
+      // tone(BUZZER_PIN, BUZZER_FREQUENCY_HZ);   // 蜂鸣器暂时停用，需要时取消注释
     }
     else {
-      noTone(BUZZER_PIN);
+      // noTone(BUZZER_PIN);   // 蜂鸣器暂时停用，需要时取消注释
     }
   }
 }

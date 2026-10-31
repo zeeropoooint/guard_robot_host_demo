@@ -119,22 +119,57 @@ def key_to_task_index(key):
     return None
 
 
-def execute_action(action):
+def wait_with_camera(camera, seconds, status):
+    """等待指定秒数，等待期间持续刷新摄像头画面。
+
+    OpenCV 窗口只有在不断调用 wait_key 时才会刷新，直接用 time.sleep()
+    会让画面冻结、窗口显示"未响应"。这里改成等的同时照常读帧并显示。
+    输入：camera 摄像头对象；seconds 等待秒数；status 画面上的提示文字
+    输出：True 正常等完；False 用户按 Q/Esc 要求退出
+    """
+
+    deadline = time.monotonic() + seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return True
+
+        frame = vision.read_frame(camera)
+        if frame is not None:
+            vision.show_frame(
+                frame, [], f"{status}（剩余 {remaining:.1f} 秒）"
+            )
+        if vision.is_quit_key(vision.wait_key()):
+            print("按 Q 或 Esc 退出。")
+            return False
+
+
+def execute_action(action, camera):
     """执行任务指定的动作。
 
-    输入：action 动作名，"laser" 发射激光 或 "fire" 发射一次
-    输出：无；动作名未知时抛出 ValueError。
+    输入：action 动作名，"laser" 发射激光 或 "fire" 发射一次；
+         camera 摄像头对象（动作等待期间用来刷新画面）
+    输出：True 动作执行完毕；False 用户中途按 Q/Esc 退出；
+         动作名未知时抛出 ValueError。
     """
 
     if action == "laser":
-        board.laser_on_for(3)
+        board.laser_on()
+        try:
+            if not wait_with_camera(camera, 3, "激光发射中"):
+                return False
+        finally:
+            board.laser_off()
         print("    动作：激光发射 3 秒")
     elif action == "fire":
         board.fire_once()
-        time.sleep(3)   # 留时间给发射机构完成动作
+        # 留时间给发射机构完成动作，其间画面照常刷新
+        if not wait_with_camera(camera, 3, "发射中"):
+            return False
         print("    动作：发射一次")
     else:
         raise ValueError(f"未知动作: {action}（只支持 laser / fire）")
+    return True
 
 
 def pick_circle_near(circles, target, last_aim):
@@ -450,11 +485,13 @@ def main():
                 print(f"\n>>> 切换到任务 {i+1}/{len(TASKS)}")
                 continue
 
-            execute_action(task["action"])  # 目标到位后执行动作
+            if not execute_action(task["action"], camera):
+                break   # 动作等待期间用户按了 Q/Esc
             hold = task.get("hold", 0)      # 可选：动作后停留，云台保持不动
             if hold:
                 print(f"    停留 {hold} 秒……")
-                time.sleep(hold)
+                if not wait_with_camera(camera, hold, f"停留 {hold} 秒"):
+                    break
             i += 1   # 正常完成，进入下一个任务
         else:
             print("\n所有任务完成。")

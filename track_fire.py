@@ -338,7 +338,7 @@ def track_tag(camera, detector, tag_id, offset, aim_circle=False,
         if vision.is_quit_key(key):
             print("按 Q 或 Esc 退出。")
             return False
-        jump = vision.key_to_task_index(key)   # 数字键：停住云台，返回任务序号
+        jump = key_to_task_index(key)   # 数字键：停住云台，返回任务序号
         if jump is not None and jump <= len(TASKS):
             board.set_motor_b(0)
             return jump
@@ -392,7 +392,7 @@ def track_circle(camera, offset):
         if vision.is_quit_key(key):
             print("按 Q 或 Esc 退出。")
             return False
-        jump = vision.key_to_task_index(key)   # 数字键：停住云台，返回任务序号
+        jump = key_to_task_index(key)   # 数字键：停住云台，返回任务序号
         if jump is not None and jump <= len(TASKS):
             board.set_motor_b(0)
             return jump

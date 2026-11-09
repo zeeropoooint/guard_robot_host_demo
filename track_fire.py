@@ -1,4 +1,9 @@
-"""按任务顺序执行：调整舵机俯仰 → 跟踪标签 / 找圆 → 执行动作（激光 / 发射）
+"""按任务顺序执行：开局定位 → 调整舵机俯仰 → 跟踪标签 / 找圆 → 执行动作（激光 / 发射）
+
+开局快速定位：
+    场上所有目标相对位置固定（config.TAG_ANGLE，以任务 1/2/3 为 0°、
+    俯视顺时针为正）。程序启动后只要识别到任意一个已知标签，就按
+    "速度 × 时间"开环转回 0° 任务起点；转角系数用 tools/calibrate_rotation.py 标定。
 
 任务定义（TASKS）：
     每个任务对应一个特定编号的 AprilTag，包含：
@@ -7,6 +12,8 @@
         angle   ：跟踪该标签时舵机（俯仰）角度，0～180
         action  ：标签到位后执行的动作，"laser" 发射激光 或 "fire" 发射一次
          hold    ：可选，动作执行完成后停留的秒数（云台保持不动），缺省为不停留
+         wait_for_next：可选，True 表示动作完成后云台/舵机保持不动，摄像头持续
+                  识别，原地等到下一发标签出现在画面里才继续（不是定时等待）
 
     找圆任务（把 tag 换成 circle=True 即可）：
         circle  ：True 表示不找标签，改为寻找画面中的圆，圆心到位后执行动作
@@ -36,13 +43,17 @@ import time
 
 from board import board
 from vision import vision
-from config import SERIAL_PORT, VOLTAGE_POLARITY
+from config import (SERIAL_PORT, VOLTAGE_POLARITY, TAG_ANGLE,
+                    GIMBAL_CLOCKWISE_SIGN)
 
 MOTOR_SPEED = 160        # 云台转速度
 SEARCH_SPEED = MOTOR_SPEED * VOLTAGE_POLARITY   # 未发现目标标签时，向一个方向旋转搜索
 CENTER_HALF_WIDTH = 10   # 标签离画面中心多少像素以内算"居中"
 CENTER_DIRECTION = -1    # 标签/圆心回中的旋转方向：+1 默认，-1 反向（不影响搜索方向）
 DETECT_SETTLE = 0.15     # 识别到标签后先停止左右转动、等云台停稳的秒数
+HOME_SEARCH_TIMEOUT = 30   # 开局定位：搜索/校验阶段的最长秒数，超时放弃定位
+LOST_GRACE = 3           # 对准阶段目标短暂丢失时，沿用上次转向的最多帧数
+HOME_MOTOR_SPEED = 255   # 开局定位的旋转速度：用电机最大值，缩短归位时间
 
 # 标签附近找圆：标签锁定后，找离标签最近的圆（杯口），对准圆心后才执行动作。
 # 总开关默认关闭，需要该功能的任务在任务里写 "aim_circle": True
@@ -74,8 +85,9 @@ TASKS = [
     # tag：标签编号；angle：舵机俯仰角度；
     # action：动作（laser 激光 / fire 发射）；offset：标签期望位置（右正左负，0 即画面中心）
     # search：可选，False 表示未发现该标签时云台不转动、原地等待（缺省为搜索转动）
-    {"tag": 1, "offset": -45, "angle": 110, "action": "fire", "hold": 6.5, "search": False},
-    {"tag": 2, "offset": -45, "angle": 110, "action": "fire", "hold": 6.5},
+    {"tag": 1, "offset": -45, "angle": 110, "action": "fire",
+     "wait_for_next": True, "search": False},
+    {"tag": 2, "offset": -45, "angle": 110, "action": "fire", "wait_for_next": True},
     {"tag": 3, "offset": -45, "angle": 110, "action": "fire"},
     {"tag": 4, "offset": -24, "angle": 110, "action": "laser"},
     {"tag": 5, "offset": 10, "angle": 105, "action": "fire"},
@@ -274,6 +286,125 @@ def scan_pitch(camera, detector, tag_id, use_circle, start_angle):
     return best_angle, True
 
 
+def home_to_start(camera, detector):
+    """开局快速定位：靠角度表逐标签导航回 0°（任务 1 方向），全程闭环。
+
+    场上所有目标的相对位置固定（config.TAG_ANGLE，以任务 1/2/3 为 0°、
+    俯视顺时针为正）。流程：
+      1. 原地看 / 慢速搜索，直到看到任意已知标签 → 大概知道当前朝向；
+      2. **只在这一刻算一次最短路径、锁定旋转方向**，之后一直朝这个方向转
+         （途中看到的其它标签只用来更新显示，不再改方向）；
+      3. 0° 标签（1/2/3 号）进入画面中区 → 定位完成，交给任务 1 精细对准。
+    方向必须锁定：多个标签同时可见时（如 6 号 140° 与 7 号 180°），
+    对 140° 的最短路径是"角度减小"，对 180° 却是"角度增大"，
+    若每帧重新算方向就会在两个标签之间来回震荡、永远转不出去。
+    速度换算只乘 GIMBAL_CLOCKWISE_SIGN；VOLTAGE_POLARITY 只管画面居中方向，
+    不能掺进世界坐标导航（两者都乘会把方向抵消掉）。
+    HOME_SEARCH_TIMEOUT 内没完成则放弃定位，按原流程执行。
+    输出：True 继续执行；False 用户按 Q/Esc 退出。
+    """
+
+    print("开局定位：逐标签导航回任务起点……")
+    deadline = time.monotonic() + HOME_SEARCH_TIMEOUT   # 超时还没完成就放弃
+    current = None      # 当前朝向：最近一次看到的已知标签角度
+    direction = 0       # 锁定的旋转方向：+1 角度增大、-1 角度减小、0 尚未确定
+    last_speed = None   # 上一次发送的速度（None 表示尚未发过指令）
+    seen = set()        # 已经打印过的标签角度，避免日志刷屏
+    try:
+        while time.monotonic() < deadline:
+            frame, tags = vision.read_tags(camera, detector)
+            if frame is None:
+                continue
+
+            center_x = frame.shape[1] // 2
+            zero = next((t for t in tags if TAG_ANGLE.get(t.tag_id) == 0), None)
+
+            if zero is not None:
+                # 0° 标签进画面还不够——刚进画面时标签贴在边缘，识别极不稳定，
+                # 直接交接给任务 1 会导致对准阶段反复"看到-丢失"抖动。
+                # 继续把它往画面中区带，进中区（约 ±1/6 屏宽）才算定位完成。
+                zx = int(zero.center[0] - center_x)
+                if abs(zx) <= frame.shape[1] // 6:
+                    print(f"    已看到标签 {zero.tag_id} 且进入画面中区，定位完成。")
+                    return True
+                speed = motor_speed(zx)   # 与对准阶段同方向逻辑
+                if speed:                 # 方向沿用居中逻辑，速度提到满速
+                    speed = (1 if speed > 0 else -1) * HOME_MOTOR_SPEED
+                status = f"定位导航：标签 {zero.tag_id} 居中调整（{zx:+d}px）"
+            else:
+                # 多个标签同时可见时取离画面中心最近的那个：它的角度估计最准
+                known = min((t for t in tags if t.tag_id in TAG_ANGLE),
+                            key=lambda t: abs(t.center[0] - center_x), default=None)
+                if known is not None:
+                    current = TAG_ANGLE[known.tag_id]
+                    if current not in seen:
+                        seen.add(current)
+                        print(f"    看到标签 {known.tag_id}（场上角度 {current}°）")
+
+                if direction == 0 and current is not None:
+                    # 第一次看到标签：算最短路径（±180° 内）并锁定方向，之后不再改
+                    delta = -current % 360
+                    if delta > 180:
+                        delta -= 360
+                    direction = 1 if delta > 0 else -1
+                    print(f"    锁定旋转方向：{'角度增大' if direction > 0 else '角度减小'}"
+                          f"（从 {current}° 回 0°）")
+
+                if direction == 0:
+                    speed = SEARCH_SPEED   # 还不知道朝向：慢速搜索任意已知标签
+                    status = "开局定位：搜索已知标签中……"
+                else:
+                    # direction>0 表示朝角度增大方向转；正速度是否等于角度增大
+                    # 由 GIMBAL_CLOCKWISE_SIGN 决定（标定脚本会给）
+                    speed = direction * GIMBAL_CLOCKWISE_SIGN * HOME_MOTOR_SPEED
+                    status = (f"定位导航：当前 {current}°，"
+                              f"{'角度增大' if direction > 0 else '角度减小'}方向旋转")
+
+            if speed != last_speed:   # 只在方向变化时发指令
+                board.set_motor_b(speed)
+                last_speed = speed
+
+            vision.show_frame(frame, tags, status)
+            if vision.is_quit_key(vision.wait_key()):
+                print("按 Q 或 Esc 退出。")
+                return False
+    finally:
+        board.stop_motor_b()
+
+    print("    定位超时，放弃定位，按原顺序执行。")
+    return True
+
+
+def wait_for_tag(camera, detector, tag_id):
+    """云台/舵机保持不动，原地等待指定标签出现在画面里。
+
+    用于相邻目标衔接：上一发打完后不做定时等待（time.sleep 会卡住识别），
+    摄像头照常读帧识别，一看到下一发标签就返回，由后续任务接着对准。
+    输入：camera/detector 视觉对象；tag_id 要等待的标签 id
+    输出：True 标签已出现；False 用户按 Q/Esc 退出；
+         整数 n 表示按了数字键，请求跳到任务 n。
+    """
+
+    while True:
+        frame, tags = vision.read_tags(camera, detector)
+        if frame is None:
+            continue
+
+        if any(t.tag_id == tag_id for t in tags):
+            print(f"    标签 {tag_id} 已出现，进入对准。")
+            return True
+
+        vision.show_frame(frame, tags, f"原地等待标签 {tag_id} 出现……")
+        key = vision.wait_key()
+        if vision.is_quit_key(key):
+            print("按 Q 或 Esc 退出。")
+            return False
+        jump = key_to_task_index(key)   # 数字键：停住云台，返回任务序号
+        if jump is not None and jump <= len(TASKS):
+            board.set_motor_b(0)
+            return jump
+
+
 def track_tag(camera, detector, tag_id, offset, aim_circle=False,
               base_pitch=PITCH_START, search=True):
     """跟踪指定 id 的标签直到期望位置（可改为对准标签附近的圆心）。
@@ -292,6 +423,7 @@ def track_tag(camera, detector, tag_id, offset, aim_circle=False,
     last_aim = None  # 上一次对准的圆 (x, y, r)，标签丢失时按它找回圆
     last_dy = 0      # 上一次"圆心 − 标签中心"的垂直像素差（标签闪断时沿用）
     searching = True # 是否处于左右转动搜索目标的状态
+    lost_count = 0   # 目标连续丢失的帧数（识别闪断容错用）
     while True:
         frame, tags = vision.read_tags(camera, detector)
         if frame is None:
@@ -307,16 +439,23 @@ def track_tag(camera, detector, tag_id, offset, aim_circle=False,
             aim = pick_circle_near(circles, target, last_aim)
 
         if target is None and aim is None:
+            lost_count += 1
             if search:
                 # 没发现目标：云台左右转动搜索，直到标签进入画面
                 searching = True
                 speed = SEARCH_SPEED
                 status = f"标签 {tag_id}：未发现，搜索中"
+            elif lost_count <= LOST_GRACE and last_speed != 0:
+                # 识别闪断容错：刚还在对准，短暂丢失时沿用上次转向，
+                # 避免"看到一帧转一下、丢一帧停一下"的抖动（电机动不起来）
+                speed = last_speed
+                status = f"标签 {tag_id}：短暂丢失，保持转向"
             else:
                 # 不搜索：云台保持不动，原地等待标签进入画面
                 speed = 0
                 status = f"标签 {tag_id}：未发现，原地等待"
         else:
+            lost_count = 0
             if searching:   # 刚识别到目标：先停止左右转动，再做精细对准
                 searching = False
                 if search:
@@ -444,8 +583,11 @@ def main():
         print("云台已就绪，开始按顺序执行任务。"
               "按数字键 1~9（0=任务 10）可随时切换任务。")
 
+        homed = home_to_start(camera, detector)   # 开局：定位到任务起点方向
+
         i = 0   # 当前任务下标（0 起）；数字键跳转后从这里继续按顺序执行
-        while i < len(TASKS):
+        last_angle = None   # 上一次设定的舵机角度，角度没变就不重复调用舵机
+        while homed and i < len(TASKS):   # homed=False 表示定位时用户按了退出
             task = TASKS[i]
             is_circle = bool(task.get("circle"))   # True：找圆任务；False：标签任务
             # 标签任务默认锁定后继续对准附近的圆心（总开关 AIM_CIRCLE_NEAR_TAG，
@@ -470,7 +612,10 @@ def main():
                                        is_circle or aim_circle, start_angle)
                 if not ok:   # 用户退出，跳过剩余任务
                     break
-            board.set_servo_angle(angle)  # 调整装置俯仰角度
+                last_angle = None   # 扫描过程舵机已动过，必须重新设定
+            if angle != last_angle:   # 调整装置俯仰角度（角度没变则不调用舵机）
+                board.set_servo_angle(angle)
+                last_angle = angle
 
             if is_circle:  # 找圆任务：对准圆心
                 result = track_circle(camera, offset)
@@ -487,6 +632,19 @@ def main():
 
             if not execute_action(task["action"], camera):
                 break   # 动作等待期间用户按了 Q/Esc
+            # 可选：动作后原地等待下一发标签出现（云台/舵机不动，识别照常进行）
+            next_tag = (TASKS[i + 1].get("tag")
+                        if task.get("wait_for_next") and i + 1 < len(TASKS)
+                        else None)
+            if next_tag is not None:
+                print(f"    原地等待标签 {next_tag} 出现……")
+                result = wait_for_tag(camera, detector, next_tag)
+                if result is False:   # 用户退出，跳过剩余任务
+                    break
+                if type(result) is int:   # 按了数字键：跳到对应任务
+                    i = result - 1
+                    print(f"\n>>> 切换到任务 {i+1}/{len(TASKS)}")
+                    continue
             hold = task.get("hold", 0)      # 可选：动作后停留，云台保持不动
             if hold:
                 print(f"    停留 {hold} 秒……")
@@ -494,7 +652,8 @@ def main():
                     break
             i += 1   # 正常完成，进入下一个任务
         else:
-            print("\n所有任务完成。")
+            if homed:
+                print("\n所有任务完成。")
     finally:
         # 收尾：不管正常退出还是出错，都会执行
         if board.is_connected():   # 已连接才需要停机和断开

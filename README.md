@@ -5,7 +5,7 @@
 
 ## 1. 安装 uv
 
-从 [uv releases](https://github.com/astral-sh/uv/releases) 下载 `uv-x86_64-pc-windows-msvc.zip`，解压后将 `uv.exe` 放到 `d:\software\uv` 目录
+从 [uv 官方安装文档](https://docs.astral.sh/uv/getting-started/installation/) 下载 Windows 版独立可执行文件（Standalone installer），解压后将 `uv.exe` 放到 `d:\software\uv` 目录
 将 `d:\software\uv` 添加到环境变量 Path 中
 具体操作如下：
 
@@ -85,6 +85,8 @@ SERIAL_PORT = "COM13"
 > 说明：`track.py` / `track_pid.py` 同样使用 `config.py` 里的 `VOLTAGE_POLARITY`，与 `test_board.py` 等示例一致，统一在配置文件中调整。
 
 # 运行程序
+
+> ⚠️ **先开电源再运行！** 控制板电源没开时，程序能正常启动、摄像头和识别都正常，但云台电机/舵机/发射机构全部不动——日志里能看到"发送指令"却毫无反应。遇到"识别正常但云台不动"，第一件事先检查电源开关。
 
 打开终端，执行：
 

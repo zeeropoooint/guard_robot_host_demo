@@ -63,6 +63,12 @@ const int MANUAL_FIRE_BUTTON_PIN = 13;
 // 按键电平持续稳定达到该时间后，才确认状态发生变化，用于过滤机械抖动。
 const unsigned long BUTTON_DEBOUNCE_MS = 30;
 
+// 两次 A 键锁定切换的最小间隔：避免抖动或电平不稳导致"锁上又自己解锁"。
+const unsigned long BUTTON_LOCK_MIN_INTERVAL_MS = 500;
+
+// 舵机安全角：A 键解锁（可能被人手拨动过）后先复位到这里，再由主机重新摆俯仰。
+const int SERVO_SAFE_ANGLE = 90;
+
 // 每次改变舵机角度时，用 200 ms 完成整个移动过程。
 const unsigned long SERVO_MOVE_DURATION_MS = 200;
 
@@ -102,7 +108,6 @@ const unsigned long BUZZER_OFF_DURATION_MS = 800;
 
 String receivedData;
 Servo servo_2;
-
 // 记录上一次下发给舵机的目标角度，作为下一次平滑移动的起点。
 int currentServoAngle = 90;
 
@@ -110,6 +115,7 @@ int currentServoAngle = 90;
 bool fireButtonLastReading = LOW;
 bool fireButtonStableState = LOW;
 unsigned long fireButtonLastChangeTime = 0;
+unsigned long lastLockToggleTime = 0;   // 上一次 A 键切换锁状态的时间
 
 bool loadButtonLastReading = LOW;
 bool loadButtonStableState = LOW;
@@ -230,7 +236,11 @@ void loop() {
  * 定时命令必须先于普通的 @MA/@MB 判断，否则相同的命令前缀会导致误匹配。
  */
 void processSerialCommand(const String &command) {
-  if (command == "@JGON") {
+  if (command == "@?") {
+    // 主机主动查询当前 A 键锁状态。
+    Serial.print(motorBLocked ? "@LK1\n" : "@LK0\n");
+  }
+  else if (command == "@JGON") {
     digitalWrite(LASER_PIN, HIGH);
   }
   else if (command == "@JGOFF") {
@@ -267,6 +277,19 @@ void processSerialCommand(const String &command) {
       motorBTimedRunActive = false;
       setMotorB(motorValueB);
     }
+  }
+  else if (command == "@QS") {
+    // 主机回读舵机当前设定角（舵机无位置反馈，只能回报最后写入的角度）。
+    Serial.print("@SA");
+    Serial.print(currentServoAngle);
+    Serial.print("\n");
+  }
+  else if (command == "@SR") {
+    // A 键解锁后复位舵机到安全角，主机据此重新摆俯仰。
+    moveServoTo(SERVO_SAFE_ANGLE);
+    Serial.print("@SA");
+    Serial.print(currentServoAngle);
+    Serial.print("\n");
   }
   else if (command.startsWith("@S")) {
     int servoAngle = constrain(command.substring(2).toInt(), 0, 180);
@@ -361,7 +384,9 @@ void serviceMotorBControl() {
   if ((now - fireButtonLastChangeTime) >= BUTTON_DEBOUNCE_MS &&
       fireButtonReading != fireButtonStableState) {
     fireButtonStableState = fireButtonReading;
-    if (fireButtonStableState == HIGH) {
+    if (fireButtonStableState == HIGH &&
+        (now - lastLockToggleTime) >= BUTTON_LOCK_MIN_INTERVAL_MS) {
+      lastLockToggleTime = now;
       toggleMotorBLock();
     }
   }
@@ -377,6 +402,8 @@ void serviceMotorBControl() {
  */
 void toggleMotorBLock() {
   motorBLocked = !motorBLocked;
+  // 状态变化立刻上报主机：@LK1 锁定、@LK0 解锁。
+  Serial.print(motorBLocked ? "@LK1\n" : "@LK0\n");
   if (motorBLocked) {
     motorBTimedRunActive = false;
     setMotorB(0);

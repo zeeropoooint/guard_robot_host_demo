@@ -50,6 +50,22 @@ _serial: Optional[Any] = None
 _port: Optional[str] = None
 _write_lock = threading.Lock()
 
+# A 键锁定状态：固件通过 @LK1 / @LK0 上报，后台线程解析。
+# 解锁只记一个"事件"，由上层决定是否重做当前任务，绝不自动补发速度。
+_motor_b_locked = False
+_unlock_event = threading.Event()
+_reader_thread: Optional[threading.Thread] = None
+_reader_stop = threading.Event()
+
+# 舵机回读：固件收到 @QS 后回 @SA{角度}，后台线程放进这里。
+_state_lock = threading.Lock()
+_servo_reply: Optional[int] = None
+_servo_event = threading.Event()
+
+SERVO_TOLERANCE_DEG = 2   # 回读偏差在多少度以内算已到位
+SERVO_READ_TIMEOUT = 0.25  # 等待 @SA 回包的秒数
+SERVO_SAFE_ANGLE = 90     # 解锁后的舵机复位角（与固件 SERVO_SAFE_ANGLE 一致）
+
 # ============================ 连接和断开控制器 ============================
 
 def connect(
@@ -61,7 +77,7 @@ def connect(
 ) -> None:
     """打开控制器串口；如果已经连接则不重复打开。"""
 
-    global _serial, _port
+    global _serial, _port, _reader_thread
 
     if not isinstance(port, str) or not port.strip():
         raise ValueError("port 必须是非空字符串，例如 'COM3'")
@@ -92,6 +108,15 @@ def connect(
         _port = normalized_port
         if reset_delay:
             time.sleep(float(reset_delay))
+        _reader_stop.clear()
+        _unlock_event.clear()
+        _reader_thread = threading.Thread(
+            target=_reader_loop, args=(_serial,), daemon=True)
+        _reader_thread.start()   # 后台解析固件的 @LK 状态上报
+        try:
+            send_command("@?")   # 主动查询一次当前锁状态，避免漏掉上电前的事件
+        except BoardError:
+            pass
     except Exception as exc:
         _serial = None
         _port = None
@@ -111,19 +136,84 @@ def is_connected() -> bool:
 def disconnect() -> None:
     """断开控制器串口；重复调用是安全的。"""
 
-    global _serial, _port
+    global _serial, _port, _motor_b_locked
 
     if _serial is None:
         return
 
     port = _port
+    _reader_stop.set()          # 先通知后台线程退出，再关串口
     try:
         _serial.close()
     except Exception as exc:
         raise BoardConnectionError(f"关闭串口 {port} 失败: {exc}") from exc
     finally:
+        _motor_b_locked = False
+        _unlock_event.clear()
         _serial = None
         _port = None
+
+
+# ============================ 固件状态上报 ============================
+
+def _reader_loop(ser: Any) -> None:
+    """后台读取串口，解析固件上报的 A 键锁定状态。
+
+    固件在 A 键切换后发送 @LK1（锁定）/ @LK0（解锁）。这里只更新状态，
+    锁定时不干预、解锁时也不补发速度——要不要恢复动作由上层决定。
+    """
+
+    global _motor_b_locked, _servo_reply
+
+    while not _reader_stop.is_set():
+        try:
+            line = ser.readline()
+        except Exception:
+            break
+        if not line:
+            continue
+        text = line.decode("ascii", "ignore").strip()
+        if text.startswith("@SA"):
+            # 舵机回读：@SA{角度}
+            try:
+                angle = int(text[3:])
+            except ValueError:
+                continue
+            with _state_lock:
+                _servo_reply = angle
+            _servo_event.set()
+            continue
+        if text not in ("@LK0", "@LK1"):
+            continue          # 固件还打印中文调试信息，其余行忽略
+        locked = text == "@LK1"
+        if locked == _motor_b_locked:
+            continue
+        _motor_b_locked = locked
+        if not locked:
+            _unlock_event.set()   # 通知上层："刚解锁"，由上层决定后续动作
+
+
+def motor_b_locked() -> bool:
+    """A 键是否锁定了 B 电机（固件上报 @LK1）。
+
+    输入：无
+    输出：bool，True 表示 A 键锁定中，此时 @MB 指令会被固件丢弃
+    """
+
+    return _motor_b_locked
+
+
+def take_unlock_event() -> bool:
+    """取走"A 键刚解锁"事件。
+
+    输入：无
+    输出：bool，True 表示自上次取走后又发生过一次解锁
+    """
+
+    if not _unlock_event.is_set():
+        return False
+    _unlock_event.clear()
+    return True
 
 
 # ============================ 底层命令 ============================
@@ -159,15 +249,68 @@ def send_command(command: str) -> None:
 
 # ============================ 动作命令：舵机 ============================
 
-def set_servo_angle(angle: int) -> None:
-    """让舵机转到指定角度。
+def _query_servo() -> Optional[int]:
+    """查询舵机当前设定角（发 @QS，等固件回 @SA）。
 
+    输入：无
+    输出：角度；超时没回包返回 None
+    """
+
+    global _servo_reply
+
+    with _state_lock:
+        _servo_reply = None
+    _servo_event.clear()
+    send_command("@QS")
+    if not _servo_event.wait(SERVO_READ_TIMEOUT):
+        return None
+    with _state_lock:
+        return _servo_reply
+
+
+def _servo_reached(angle: int, actual: Optional[int]) -> bool:
+    """回读值是否与期望角一致（容差 SERVO_TOLERANCE_DEG）。"""
+
+    return actual is not None and abs(actual - angle) <= SERVO_TOLERANCE_DEG
+
+
+def set_servo_angle(angle: int) -> bool:
+    """让舵机转到指定角度，并回读确认。
+
+    摄像头不随俯仰转动，画面无法验证俯仰是否到位，所以发完 @S 后用
+    @QS 回读设定角；不一致或超时重发一次。
     输入：angle 角度，0～180 之间
-    输出：无；参数非法时抛出 TypeError/ValueError。
+    输出：bool，True 表示回读确认到位（固件不支持回读时为 False）
     """
 
     angle = _validate_integer("angle", angle, 0, 180)
     send_command(f"@S{angle}")
+    actual = _query_servo()
+    if _servo_reached(angle, actual):
+        return True
+
+    print(f"警告：舵机回读异常（期望 {angle}°，实回 {actual}），重发一次")
+    send_command(f"@S{angle}")
+    actual = _query_servo()
+    if _servo_reached(angle, actual):
+        return True
+    print(f"警告：舵机仍未确认到位（期望 {angle}°，实回 {actual}）")
+    return False
+
+
+def reset_servo() -> bool:
+    """A 键解锁后把舵机复位到安全角（固件 SERVO_SAFE_ANGLE = 90°）。
+
+    输入：无
+    输出：bool，True 表示回读确认到位
+    """
+
+    send_command("@SR")
+    actual = _query_servo()
+    if _servo_reached(SERVO_SAFE_ANGLE, actual):
+        return True
+    print(f"警告：舵机复位未确认（实回 {actual}）")
+    return False
 
 
 # ============================ 动作命令：电机 ============================
